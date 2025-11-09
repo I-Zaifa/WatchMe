@@ -883,6 +883,14 @@
     let screenAudioWarningActive = false;
     let lastScreenAudioWarningMs = 0;
 
+    let lastScreenFrameSentMs = 0;
+    let lastScreenFrameFailureMs = 0;
+    let lastScreenFrameFailureMsg = "";
+    let lastScreenFrameFailureLogMs = 0;
+    let lastScreenAudioChunkMs = 0;
+    let screenAudioWarningActive = false;
+    let lastScreenAudioWarningMs = 0;
+
     let lastScreenImageData = null;
     let lastScreenChangeMs = 0;
     let lastScreenChangeLevel = 0;
@@ -1541,6 +1549,11 @@
                 const scaled = floatData[i] * scale;
                 down[i] = Math.max(-1, Math.min(1, scaled));
               }
+              lastScreenAudioChunkMs = performance.now();
+              updateScreenStatusUi();
+              if (!liveSession || !isSessionOpen) return;
+
+              const down = floatData.map((v) => v * 0.85);
               const pcm16 = float32ToInt16(down);
               const base64 = int16ToBase64(pcm16);
 
