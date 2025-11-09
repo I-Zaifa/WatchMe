@@ -859,6 +859,14 @@
     let screenAudioProcessor = null;
     let screenAudioGain = null;
 
+    let lastScreenFrameSentMs = 0;
+    let lastScreenFrameFailureMs = 0;
+    let lastScreenFrameFailureMsg = "";
+    let lastScreenFrameFailureLogMs = 0;
+    let lastScreenAudioChunkMs = 0;
+    let screenAudioWarningActive = false;
+    let lastScreenAudioWarningMs = 0;
+
     let lastScreenImageData = null;
     let lastScreenChangeMs = 0;
     let lastScreenChangeLevel = 0;
@@ -867,6 +875,9 @@
     let livelyTimer = null;
     let nextLivelyAtMs = 0;
     let lastAutoCommentMs = 0;
+    let lastAutoSkipMs = 0;
+
+    let contextMonitorTimer = null;
 
     let lastUserActivityMs = performance.now();
     let lastUserTranscriptText = "";
@@ -943,6 +954,121 @@
       div.textContent = text;
       chatLogEl.appendChild(div);
       chatLogEl.scrollTop = chatLogEl.scrollHeight;
+    }
+
+    function markScreenFrameFailure(message) {
+      lastScreenFrameFailureMs = performance.now();
+      if (!message) return;
+      const now = performance.now();
+      if (
+        message === lastScreenFrameFailureMsg &&
+        now - lastScreenFrameFailureLogMs < 4000
+      ) {
+        return;
+      }
+      lastScreenFrameFailureMsg = message;
+      lastScreenFrameFailureLogMs = now;
+      log(message, "warn");
+      appendSystemBubble(message);
+      if (screenOverlayText) {
+        screenOverlayText.textContent = message;
+      }
+    }
+
+    function hasFreshScreenFrame(windowMs = 6000) {
+      if (!screenStream || !lastScreenFrameSentMs) return false;
+      return performance.now() - lastScreenFrameSentMs <= windowMs;
+    }
+
+    function hasFreshScreenAudio(windowMs = 6000) {
+      if (!screenAudioEnabled || !screenAudioStream || !lastScreenAudioChunkMs)
+        return false;
+      return performance.now() - lastScreenAudioChunkMs <= windowMs;
+    }
+
+    function updateScreenStatusUi() {
+      if (!screenOverlayText) return;
+      if (!screenStream) {
+        screenOverlayText.textContent = "Not sharing screen.";
+        return;
+      }
+
+      const now = performance.now();
+      if (hasFreshScreenFrame(4000)) {
+        if (screenAudioEnabled && screenAudioStream) {
+          if (hasFreshScreenAudio(4000)) {
+            screenOverlayText.textContent = "Screen + audio live → Gemini.";
+          } else {
+            screenOverlayText.textContent =
+              "Screen live (system audio silent).";
+          }
+        } else {
+          screenOverlayText.textContent = "Screen live (no system audio).";
+        }
+      } else if (
+        lastScreenFrameFailureMs &&
+        now - lastScreenFrameFailureMs < 8000 &&
+        lastScreenFrameFailureMsg
+      ) {
+        screenOverlayText.textContent = lastScreenFrameFailureMsg;
+      } else {
+        screenOverlayText.textContent = "Screen feed stale or blocked.";
+      }
+    }
+
+    function monitorContextFreshness() {
+      updateScreenStatusUi();
+
+      if (isSessionOpen && screenAudioEnabled && screenAudioStream) {
+        const fresh = hasFreshScreenAudio(7000);
+        if (!fresh) {
+          const now = performance.now();
+          if (!screenAudioWarningActive || now - lastScreenAudioWarningMs > 6000) {
+            screenAudioWarningActive = true;
+            lastScreenAudioWarningMs = now;
+            log(
+              "System audio feed seems silent or blocked; the model cannot hear it right now.",
+              "warn"
+            );
+            appendSystemBubble(
+              "Heads up: Gemini hasn't received system audio for several seconds. It should say it can't hear the video until audio resumes."
+            );
+          }
+        } else if (screenAudioWarningActive) {
+          screenAudioWarningActive = false;
+          lastScreenAudioWarningMs = performance.now();
+          log("System audio feed resumed.");
+        }
+      } else {
+        screenAudioWarningActive = false;
+      }
+    }
+
+    function buildContextHints(windowMs = 6500) {
+      const hints = [];
+      if (!hasFreshScreenFrame(windowMs)) {
+        if (screenStream) {
+          hints.push(
+            "You have not seen a fresh visual frame in the last several seconds, so make it clear if you cannot see what is happening right now."
+          );
+        } else {
+          hints.push(
+            "You do not currently have a screen feed, so avoid guessing about visuals."
+          );
+        }
+      }
+      if (!hasFreshScreenAudio(windowMs)) {
+        if (screenAudioEnabled && screenAudioStream) {
+          hints.push(
+            "You have not received any system audio for several seconds; state that you can't hear it instead of inventing sound details."
+          );
+        } else {
+          hints.push(
+            "There is no system audio feed right now, so do not claim to hear the video's audio."
+          );
+        }
+      }
+      return hints.join(" ");
     }
 
     function markUserActivity() {
@@ -1157,6 +1283,13 @@
     async function startScreenShare() {
       if (screenStream) return;
       try {
+        lastScreenFrameSentMs = 0;
+        lastScreenFrameFailureMs = 0;
+        lastScreenFrameFailureMsg = "";
+        lastScreenFrameFailureLogMs = 0;
+        lastScreenAudioChunkMs = 0;
+        screenAudioWarningActive = false;
+        lastScreenAudioWarningMs = 0;
         screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: true
@@ -1191,7 +1324,6 @@
             screenAudioGain.connect(ctx.destination);
 
             screenAudioProcessor.onaudioprocess = (event) => {
-              if (!liveSession || !isSessionOpen) return;
               if (!screenAudioEnabled) return;
 
               const buffer = event.inputBuffer;
@@ -1204,6 +1336,10 @@
               }
               const rms = Math.sqrt(sumSq / floatData.length);
               if (rms < screenAudioThreshold) return;
+
+              lastScreenAudioChunkMs = performance.now();
+              updateScreenStatusUi();
+              if (!liveSession || !isSessionOpen) return;
 
               const down = floatData.map((v) => v * 0.85);
               const pcm16 = float32ToInt16(down);
@@ -1231,7 +1367,7 @@
         stopScreenBtn.disabled = false;
         screenDot.classList.add("live");
         screenDot.nextElementSibling.textContent = "On";
-        screenOverlayText.textContent = "Screen live → Gemini.";
+        updateScreenStatusUi();
         log("Screen share started.");
 
         vTrack.addEventListener("ended", () => {
@@ -1278,8 +1414,16 @@
       lastScreenImageData = null;
       lastScreenChangeMs = 0;
       lastScreenChangeLevel = 0;
+      lastScreenFrameSentMs = 0;
+      lastScreenFrameFailureMs = 0;
+      lastScreenFrameFailureMsg = "";
+      lastScreenFrameFailureLogMs = 0;
+      lastScreenAudioChunkMs = 0;
+      screenAudioWarningActive = false;
+      lastScreenAudioWarningMs = 0;
       startScreenBtn.disabled = false;
       stopScreenBtn.disabled = true;
+      updateScreenStatusUi();
       log("Screen share stopped.");
     }
 
@@ -1326,29 +1470,50 @@
         // cross-origin; ignore diff metrics
       }
 
-      screenCanvas.toBlob(
-        (blob) => {
-          if (!blob || !liveSession || !isSessionOpen) return;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = reader.result;
-            const base64 = dataUrl.split(",")[1];
-            try {
-              liveSession.sendRealtimeInput({
-                video: {
-                  data: base64,
-                  mimeType: blob.type || "image/jpeg"
-                }
-              });
-            } catch (err) {
-              log("Failed to send video frame: " + (err?.message || err), "warn");
+      try {
+        screenCanvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              markScreenFrameFailure(
+                "Screen capture blocked: browser prevented forwarding this window."
+              );
+              return;
             }
-          };
-          reader.readAsDataURL(blob);
-        },
-        "image/jpeg",
-        0.85
-      );
+            lastScreenFrameSentMs = performance.now();
+            lastScreenFrameFailureMs = 0;
+            lastScreenFrameFailureMsg = "";
+            updateScreenStatusUi();
+            if (!liveSession || !isSessionOpen) {
+              return;
+            }
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const dataUrl = reader.result;
+              const base64 = dataUrl.split(",")[1];
+              try {
+                liveSession.sendRealtimeInput({
+                  video: {
+                    data: base64,
+                    mimeType: blob.type || "image/jpeg"
+                  }
+                });
+              } catch (err) {
+                log(
+                  "Failed to send video frame: " + (err?.message || err),
+                  "warn"
+                );
+              }
+            };
+            reader.readAsDataURL(blob);
+          },
+          "image/jpeg",
+          0.85
+        );
+      } catch (err) {
+        markScreenFrameFailure(
+          "Screen capture failed: " + (err?.message || err)
+        );
+      }
     }
 
     function updateScreenFpsInterval() {
@@ -1365,11 +1530,21 @@
     }
 
     function screenChangedRecently(windowMs = 12000, minLevel = 0) {
-      if (!lastScreenChangeMs) return false;
-      const age = performance.now() - lastScreenChangeMs;
-      if (age > windowMs) return false;
-      if (lastScreenChangeLevel < minLevel) return false;
-      return true;
+      const now = performance.now();
+      if (lastScreenChangeMs) {
+        const age = now - lastScreenChangeMs;
+        if (age <= windowMs && lastScreenChangeLevel >= minLevel) {
+          return true;
+        }
+      }
+      if (
+        minLevel === 0 &&
+        lastScreenFrameSentMs &&
+        now - lastScreenFrameSentMs <= windowMs
+      ) {
+        return true;
+      }
+      return false;
     }
 
     function updateSessionStatus(active) {
@@ -1418,23 +1593,45 @@
       if (now - lastUserActivityMs < profile.idleMs) return;
       if (nextLivelyAtMs && now < nextLivelyAtMs) return;
 
-      const hasScreenContext = !!screenStream;
+      const freshVideo = hasFreshScreenFrame(6500);
+      const freshAudio = hasFreshScreenAudio(6500);
+
+      if (!freshVideo && !freshAudio) {
+        scheduleNextLively(now);
+        if (now - lastAutoSkipMs > 5000) {
+          log(
+            "Skipping auto commentary: no fresh screen frames or system audio to ground a remark.",
+            "warn"
+          );
+        }
+        lastAutoSkipMs = now;
+        return;
+      }
+      lastAutoSkipMs = 0;
+
+      const hasScreenContext = freshVideo || !!screenStream;
       const strongChange = screenChangedRecently(8000, 20);
-      const anyChange    = screenChangedRecently(12000, 12);
+      const diffChange = screenChangedRecently(12000, 12);
+      const anyChange = strongChange || diffChange;
+      const fallbackFresh = freshVideo && !anyChange;
 
       if (!hasScreenContext && !anyChange) {
         scheduleNextLively(now);
         return;
       }
 
-      if (!anyChange) {
+      if (!anyChange && !fallbackFresh) {
         if (now - lastAutoCommentMs < 25000) {
           scheduleNextLively(now);
           return;
         }
+      } else if (fallbackFresh && now - lastAutoCommentMs < 25000) {
+        scheduleNextLively(now);
+        return;
       }
 
       let prompt;
+      const contextHints = buildContextHints();
       if (strongChange) {
         prompt =
           "Give a natural spoken comment about what has clearly changed on my screen in the last several seconds. " +
@@ -1444,10 +1641,17 @@
         prompt =
           "Give a short to medium spoken comment or suggestion based on the last several seconds of what you see and hear. " +
           "Add something genuinely useful or interesting; do not repeat earlier commentary or narrate tiny UI flickers.";
+      } else if (fallbackFresh) {
+        prompt =
+          "You just received a fresh look at the screen, but it might not have changed much. Only react if you can clearly tell what is happening right now; otherwise say that you can't see enough yet.";
       } else {
         prompt =
           "Only speak if you have something genuinely new or useful to say about what you're seeing and hearing from the last few seconds. " +
           "If there is basically nothing new, respond with at most a very brief remark.";
+      }
+
+      if (contextHints) {
+        prompt += " " + contextHints;
       }
 
       try {
@@ -1489,6 +1693,11 @@
       } else if (kind === "screen") {
         extra =
           " Base your answer mainly on what has been visible on my screen in roughly the last 5–10 seconds, not a single frozen frame.";
+      }
+
+      const contextHints = buildContextHints();
+      if (contextHints) {
+        extra += " " + contextHints;
       }
 
       const prompt =
@@ -1641,6 +1850,8 @@
           "The client may stop playing your audio when the user starts speaking (barge-in). Once you sense the user talking again, treat your previous response as cut off and focus on the new request.\n\n" +
           "Use several seconds of recent visual and audio context for every answer, not a single frozen frame. " +
           "Do not repeatedly say the video or game is pausing and playing again unless the user explicitly asks.\n\n" +
+          "You only receive microphone audio and system audio clips when the client successfully streams them. If system audio has been silent or missing for several seconds, say you cannot hear it instead of guessing about music or sound effects.\n" +
+          "If the recent visuals are missing, stale, or blocked, acknowledge that limitation and ask for new context instead of describing older scenes.\n\n" +
           "Special commands:\n" +
           "• “look at the screen”, “watch the screen”, “listen to the audio”, “what song is playing”, “what's going on right now” → use the last 5–10 seconds of screen/audio as your main context before answering.\n" +
           "• “keep going” → continuous live commentary; keep reacting without waiting for long silence.\n\n" +
@@ -1730,6 +1941,7 @@
       lastUserTranscriptText = "";
       lastAssistantTranscriptText = "";
       suppressAssistantTurn = false;
+      lastAutoSkipMs = 0;
       if (focusTimeoutId) {
         clearTimeout(focusTimeoutId);
         focusTimeoutId = null;
@@ -1827,12 +2039,17 @@
     if (screenAudioToggleEl) {
       screenAudioToggleEl.addEventListener("change", () => {
         screenAudioEnabled = screenAudioToggleEl.checked;
+        if (!screenAudioEnabled) {
+          screenAudioWarningActive = false;
+          lastScreenAudioChunkMs = 0;
+        }
         log(
           "Screen audio → Gemini " +
             (screenAudioEnabled
               ? "enabled (it will hear game/tab audio when you are not muted by the OS)."
               : "disabled (only your mic is sent).")
         );
+        updateScreenStatusUi();
       });
     }
 
@@ -1884,6 +2101,9 @@
         "Start the AI session, allow mic, optionally share a game window with audio, and talk. " +
         "I keep pulling screen frames every fraction of a second; I only cut myself off when your mic clearly starts talking."
       );
+      if (!contextMonitorTimer) {
+        contextMonitorTimer = setInterval(monitorContextFreshness, 2500);
+      }
     })();
   </script>
 </body>
