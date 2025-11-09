@@ -1,0 +1,1890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>WatchMe · Gemini Co-Commentator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #020617;
+      --bg-alt: #020617;
+      --surface: #020617;
+      --surface-elevated: #020617;
+      --border-subtle: rgba(148, 163, 184, 0.38);
+      --border-strong: rgba(148, 163, 184, 0.7);
+      --accent: #22c55e;
+      --accent-soft: rgba(34, 197, 94, 0.15);
+      --accent-strong: rgba(34, 197, 94, 0.8);
+      --danger: #f97373;
+      --danger-soft: rgba(248, 113, 113, 0.12);
+      --text: #e5e7eb;
+      --text-soft: #9ca3af;
+      --chip-bg: rgba(15, 23, 42, 0.9);
+      --shadow-soft: 0 16px 45px rgba(15, 23, 42, 0.85);
+      --radius-lg: 18px;
+      --radius-xl: 22px;
+      --radius-pill: 999px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "Inter", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(34, 197, 94, 0.16), transparent 55%),
+        radial-gradient(circle at bottom right, rgba(56, 189, 248, 0.16), transparent 60%),
+        #020617;
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    #app {
+      width: 100%;
+      max-width: 1280px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    header.top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: var(--radius-xl);
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.99));
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .app-name {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .app-pill {
+      font-size: 11px;
+      padding: 3px 9px;
+      border-radius: var(--radius-pill);
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(34, 197, 94, 0.55);
+      color: #bbf7d0;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: var(--radius-pill);
+      font-size: 11px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      color: var(--text-soft);
+    }
+
+    .status-pill .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4b5563;
+      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.0);
+      transition: background 120ms ease, box-shadow 120ms ease;
+    }
+
+    .status-pill.live {
+      border-color: rgba(34, 197, 94, 0.8);
+      color: #bbf7d0;
+      background: radial-gradient(circle at top left, rgba(16, 185, 129, 0.32), rgba(15, 23, 42, 0.96));
+    }
+
+    .status-pill.live .status-dot {
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.32);
+    }
+
+    .btn {
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      background: rgba(15, 23, 42, 0.92);
+      color: var(--text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition:
+        background 120ms ease,
+        transform 80ms ease,
+        border-color 120ms ease,
+        box-shadow 120ms ease,
+        opacity 100ms ease;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.8);
+      white-space: nowrap;
+    }
+
+    .btn-main {
+      background: radial-gradient(circle at top left, #22c55e 0, #16a34a 48%, #15803d 100%);
+      border-color: rgba(74, 222, 128, 0.9);
+      color: #ecfdf5;
+      box-shadow:
+        0 0 0 1px rgba(34, 197, 94, 0.4),
+        0 18px 38px rgba(22, 163, 74, 0.9);
+    }
+
+    .btn-main:hover:not(:disabled) {
+      transform: translateY(-1px);
+      background: radial-gradient(circle at top, #4ade80 0, #22c55e 40%, #15803d 100%);
+    }
+
+    .btn-ghost {
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .btn:hover:not(:disabled) {
+      background: rgba(31, 41, 55, 0.95);
+      transform: translateY(-1px);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: none;
+    }
+
+    .btn:disabled {
+      opacity: 0.38;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.7fr) minmax(0, 1.7fr) minmax(280px, 1.2fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    section.card {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.99));
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-soft);
+      padding: 10px 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 2px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-subtitle {
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    .chip-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: var(--radius-pill);
+      font-size: 10px;
+      background: var(--chip-bg);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      color: var(--text-soft);
+    }
+
+    .chip-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #4b5563;
+      box-shadow: 0 0 0 0 rgba(248, 148, 64, 0);
+      transition: background 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+    }
+
+    .chip-dot.live {
+      background: #f97316;
+      box-shadow: 0 0 0 4px rgba(248, 148, 64, 0.45);
+    }
+
+    .chip-label-strong {
+      color: #fed7aa;
+    }
+
+    #screenSection {
+      position: relative;
+    }
+
+    #screenPreview {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid rgba(15, 23, 42, 0.98);
+      background: radial-gradient(circle at center, #020617 0, #020617 65%, #020617 100%);
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+    }
+
+    #screenCanvas {
+      display: none;
+    }
+
+    .screen-footer {
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    #screenOverlayText {
+      opacity: 0.9;
+    }
+
+    .screen-buttons {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    #chatSection {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #chatLog {
+      flex: 1;
+      min-height: 0;
+      max-height: 420px;
+      overflow-y: auto;
+      padding: 6px 4px 2px;
+      border-radius: 14px;
+      background: radial-gradient(circle at top, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 1));
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      scroll-behavior: smooth;
+    }
+
+    #chatLog::-webkit-scrollbar {
+      width: 6px;
+    }
+    #chatLog::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    #chatLog::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.6);
+      border-radius: 999px;
+    }
+
+    .bubble {
+      max-width: 90%;
+      padding: 7px 10px;
+      border-radius: 14px;
+      font-size: 13px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+    }
+
+    .bubble.user {
+      margin-left: auto;
+      background: radial-gradient(circle at top right, #111827 0, #020617 65%);
+      border-color: rgba(148, 163, 184, 0.6);
+    }
+
+    .bubble.assistant {
+      margin-right: auto;
+      background: radial-gradient(circle at top left, rgba(34, 197, 94, 0.14), #020617 60%);
+      border-color: rgba(74, 222, 128, 0.65);
+    }
+
+    .bubble.system {
+      margin: 0 auto;
+      background: rgba(15, 23, 42, 0.95);
+      border-style: dashed;
+      border-color: rgba(148, 163, 184, 0.55);
+      font-size: 11px;
+      color: var(--text-soft);
+      max-width: 92%;
+    }
+
+    .chat-input-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    #textInput {
+      flex: 1;
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(55, 65, 81, 0.9);
+      padding: 7px 12px;
+      font-size: 13px;
+      background: rgba(15, 23, 42, 0.98);
+      color: var(--text);
+      outline: none;
+      min-width: 0;
+      transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    }
+
+    #textInput::placeholder {
+      color: rgba(148, 163, 184, 0.7);
+    }
+
+    #textInput:focus {
+      border-color: rgba(74, 222, 128, 0.75);
+      box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.35);
+      background: rgba(15, 23, 42, 1);
+    }
+
+    #sendTextBtn {
+      padding-inline: 12px;
+    }
+
+    #controlSection {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .control-group {
+      border-radius: 14px;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      background: rgba(15, 23, 42, 0.98);
+      padding: 8px 9px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .control-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .control-group-sub {
+      font-size: 10px;
+      color: var(--text-soft);
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    .control-row span.label {
+      color: var(--text-soft);
+    }
+
+    select {
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(55, 65, 81, 0.95);
+      background: rgba(15, 23, 42, 1);
+      color: var(--text);
+      font-size: 11px;
+      padding: 4px 9px;
+      outline: none;
+      min-width: 0;
+    }
+
+    select:focus {
+      border-color: rgba(74, 222, 128, 0.8);
+      box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.4);
+    }
+
+    .toggle-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .toggle {
+      position: relative;
+      display: inline-flex;
+      width: 34px;
+      height: 18px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .toggle input {
+      display: none;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: #111827;
+      border: 1px solid rgba(55, 65, 81, 0.95);
+      pointer-events: none;
+      transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 1px;
+      left: 1px;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: #9ca3af;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.6);
+      transition: transform 150ms ease, background 150ms ease;
+    }
+
+    .toggle input:checked + .toggle-thumb {
+      transform: translateX(14px);
+      background: #bbf7d0;
+    }
+
+    .toggle input:checked ~ .toggle-track {
+      background: rgba(34, 197, 94, 0.36);
+      border-color: rgba(74, 222, 128, 0.9);
+      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.42);
+    }
+
+    #logOutput {
+      max-height: 260px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 1));
+      border-radius: 12px;
+      padding: 6px 8px;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+    }
+
+    #logOutput::-webkit-scrollbar {
+      width: 6px;
+    }
+    #logOutput::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.6);
+      border-radius: 999px;
+    }
+
+    .log-line {
+      margin-bottom: 1px;
+      white-space: pre-wrap;
+    }
+
+    .log-line span.ts {
+      color: rgba(148, 163, 184, 0.75);
+      margin-right: 4px;
+    }
+
+    .log-line.info {
+      color: rgba(209, 213, 219, 0.92);
+    }
+    .log-line.warn {
+      color: #fbbf24;
+    }
+    .log-line.error {
+      color: #fecaca;
+    }
+
+    .status-chips-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      justify-content: flex-start;
+      font-size: 10px;
+    }
+
+    input[type="range"] {
+      width: 110px;
+    }
+
+    @media (max-width: 1080px) {
+      .main-grid {
+        grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.6fr);
+        grid-template-rows: auto auto;
+      }
+      #controlSection {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-width: 780px) {
+      header.top-bar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .header-right {
+        width: 100%;
+        justify-content: space-between;
+      }
+      .main-grid {
+        grid-template-columns: minmax(0, 1fr);
+        grid-auto-rows: auto;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .app-name {
+        font-size: 16px;
+      }
+      #chatLog {
+        max-height: 320px;
+      }
+      #logOutput {
+        max-height: 220px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="top-bar">
+      <div class="title-block">
+        <div class="app-name">
+          🎮 WatchMe
+          <span class="app-pill">Gemini 2.5 Flash · Native audio</span>
+        </div>
+        <div class="subtitle">
+          Share a game window, talk on your mic, and let Gemini riff along live.
+        </div>
+      </div>
+      <div class="header-right">
+        <div id="sessionStatus" class="status-pill">
+          <span class="status-dot"></span>
+          <span>Session idle</span>
+        </div>
+        <button id="startSessionBtn" class="btn btn-main">
+          ▶ Start AI session
+        </button>
+        <button id="stopSessionBtn" class="btn btn-ghost" disabled>
+          ■ Stop
+        </button>
+      </div>
+    </header>
+
+    <div class="main-grid">
+      <section id="screenSection" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🖥️ Screen feed</div>
+            <div class="card-subtitle">
+              Low-FPS snapshots (+ optional audio) so Gemini sees your game / browser.
+            </div>
+          </div>
+          <div class="chip-row">
+            <div class="chip">
+              <span>Video context</span>
+              <span style="opacity:0.7;">+ audio (optional)</span>
+            </div>
+            <div class="chip">
+              <span id="screenDot" class="chip-dot"></span>
+              <span class="chip-label-strong">Off</span>
+            </div>
+          </div>
+        </div>
+
+        <video id="screenPreview" autoplay muted playsinline></video>
+        <canvas id="screenCanvas"></canvas>
+
+        <div class="screen-footer">
+          <div id="screenOverlayText">Not sharing screen.</div>
+          <div class="screen-buttons">
+            <button id="startScreenBtn" class="btn btn-ghost">
+              Share screen
+            </button>
+            <button id="stopScreenBtn" class="btn btn-ghost" disabled>
+              Stop share
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="chatSection" class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">💬 Voice chat + transcript</div>
+            <div class="card-subtitle">
+              One live model for speech + vision. Transcript is you vs it, turn by turn.
+            </div>
+          </div>
+          <div class="chip-row">
+            <div class="chip">
+              <span>Mic</span>
+              <span id="micChip" style="color:#fecaca;">off</span>
+            </div>
+            <div class="chip">
+              <span>Engine</span>
+              <span id="audioChip" style="color:#fecaca;">idle</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="chatLog"></div>
+
+        <div class="chat-input-row">
+          <input
+            id="textInput"
+            type="text"
+            autocomplete="off"
+            placeholder="Type as well. “look at the screen”, “listen to the audio”, “what song is playing”, “keep going”…"
+          />
+          <button id="sendTextBtn" class="btn btn-ghost" type="button">↩ Send</button>
+        </div>
+      </section>
+
+      <section id="controlSection" class="card">
+        <div class="control-group">
+          <div class="control-group-header">
+            <span>🎛️ Behaviour</span>
+          </div>
+          <div class="control-row">
+            <span class="label">Auto commentary</span>
+            <div class="toggle-wrap">
+              <label class="toggle">
+                <input id="livelyToggle" type="checkbox" checked />
+                <span class="toggle-thumb"></span>
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+          </div>
+          <div class="control-row">
+            <span class="label">Commentary intensity</span>
+            <select id="livelyMode">
+              <option value="normal" selected>Normal</option>
+              <option value="chill">Chill</option>
+              <option value="hyper">Hyper</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <span class="label">Screen FPS</span>
+            <select id="fpsSelect">
+              <option value="4">~4 FPS</option>
+              <option value="6" selected>~6 FPS</option>
+              <option value="8">~8 FPS</option>
+              <option value="10">~10 FPS</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <span class="label">Send screen audio</span>
+            <div class="toggle-wrap">
+              <label class="toggle">
+                <input id="screenAudioToggle" type="checkbox" checked />
+                <span class="toggle-thumb"></span>
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-group-header">
+            <span>🎙️ Voice</span>
+          </div>
+          <div class="control-row">
+            <span class="label">Gemini voice</span>
+            <select id="voiceSelect">
+              <option value="">Model default</option>
+              <option value="Kore">Kore</option>
+              <option value="Fenrir">Fenrir</option>
+              <option value="Aoede">Aoede</option>
+              <option value="Puck">Puck</option>
+              <option value="Charon">Charon</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <span class="label">AI volume</span>
+            <input id="aiVolume" type="range" min="20" max="140" value="100" />
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-group-header">
+            <span>🎚️ Audio sensitivity</span>
+          </div>
+          <div class="control-row">
+            <span class="label">Mic VAD sensitivity</span>
+            <select id="micSensitivity">
+              <option value="normal" selected>Normal</option>
+              <option value="high">High (picks up softer)</option>
+              <option value="low">Low (only clear speech)</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <span class="label">Screen audio sensitivity</span>
+            <select id="screenAudioSensitivity">
+              <option value="normal" selected>Normal</option>
+              <option value="high">High (quiet music)</option>
+              <option value="low">Low (ignore small noise)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-group-header">
+            <span>📟 Status & log</span>
+          </div>
+          <div class="status-chips-row">
+            <span class="chip">
+              <span>Model</span>
+              <span>gemini-2.5-flash-native-audio-preview-09-2025</span>
+            </span>
+          </div>
+          <div id="logOutput"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script type="module">
+    import { GoogleGenAI, Modality } from "https://esm.run/@google/genai@1.4.0";
+
+    const GEMINI_API_KEY = "AIzaSyAziQpt72ga-gG5HL_i11QbGz7sBM9kL1k";
+    const GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025";
+
+    const LivelyProfiles = {
+      chill:  { idleMs: 6000, minGapMs: 11000, maxGapMs: 17000 },
+      normal: { idleMs: 4000, minGapMs: 8000,  maxGapMs: 14000 },
+      hyper:  { idleMs: 2000, minGapMs: 4000,  maxGapMs: 8000 }
+    };
+
+    const MIC_SPEECH_FRAMES_START = 3;
+    const MIC_SPEECH_FRAMES_END   = 8;
+    const MIC_RMS_THRESHOLD_DEFAULT = 0.015;
+    const SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT = 0.01;
+
+    let micThreshold = MIC_RMS_THRESHOLD_DEFAULT;
+    let screenAudioThreshold = SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT;
+
+    let ai = null;
+    let liveSession = null;
+    let isSessionOpen = false;
+
+    let audioCtx = null;
+    let outputGain = null;
+    let nextPlaybackTime = 0;
+    let activeAudioSources = [];
+
+    let micStream = null;
+    let micSource = null;
+    let micProcessor = null;
+    let micGain = null;
+    let isUserSpeaking = false;
+    let micSpeakFrameCount = 0;
+    let micSilentFrameCount = 0;
+
+    let screenStream = null;
+    let screenCanvas = null;
+    let screenCtx = null;
+    let screenInterval = null;
+
+    let screenAudioEnabled = true;
+    let screenAudioStream = null;
+    let screenAudioSource = null;
+    let screenAudioProcessor = null;
+    let screenAudioGain = null;
+
+    let lastScreenImageData = null;
+    let lastScreenChangeMs = 0;
+    let lastScreenChangeLevel = 0;
+
+    let livelyEnabled = true;
+    let livelyTimer = null;
+    let nextLivelyAtMs = 0;
+    let lastAutoCommentMs = 0;
+
+    let lastUserActivityMs = performance.now();
+    let lastUserTranscriptText = "";
+    let lastAssistantTranscriptText = "";
+    let suppressAssistantTurn = false;
+
+    let pendingFocus = null;
+    let focusTimeoutId = null;
+
+    const startSessionBtn   = document.getElementById("startSessionBtn");
+    const stopSessionBtn    = document.getElementById("stopSessionBtn");
+    const sessionStatusEl   = document.getElementById("sessionStatus");
+
+    const screenPreview     = document.getElementById("screenPreview");
+    screenCanvas            = document.getElementById("screenCanvas");
+    screenCtx               = screenCanvas.getContext("2d");
+    const startScreenBtn    = document.getElementById("startScreenBtn");
+    const stopScreenBtn     = document.getElementById("stopScreenBtn");
+    const screenDot         = document.getElementById("screenDot");
+    const screenOverlayText = document.getElementById("screenOverlayText");
+    const fpsSelect         = document.getElementById("fpsSelect");
+    const screenAudioToggleEl = document.getElementById("screenAudioToggle");
+
+    const chatLogEl         = document.getElementById("chatLog");
+    const textInputEl       = document.getElementById("textInput");
+    const sendTextBtn       = document.getElementById("sendTextBtn");
+
+    const logOutputEl       = document.getElementById("logOutput");
+    const micChipEl         = document.getElementById("micChip");
+    const audioChipEl       = document.getElementById("audioChip");
+
+    const livelyToggleEl    = document.getElementById("livelyToggle");
+    const livelyModeEl      = document.getElementById("livelyMode");
+    const voiceSelectEl     = document.getElementById("voiceSelect");
+    const micSensitivityEl  = document.getElementById("micSensitivity");
+    const screenAudioSensitivityEl = document.getElementById("screenAudioSensitivity");
+    const aiVolumeEl        = document.getElementById("aiVolume");
+
+    function nowTs() {
+      const d = new Date();
+      return d.toLocaleTimeString(undefined, { hour12: false });
+    }
+
+    function log(msg, level = "info") {
+      const line = document.createElement("div");
+      line.className = "log-line " + level;
+      const tsSpan = document.createElement("span");
+      tsSpan.className = "ts";
+      tsSpan.textContent = "[" + nowTs() + "]";
+      const msgSpan = document.createElement("span");
+      msgSpan.textContent = " " + msg;
+      line.appendChild(tsSpan);
+      line.appendChild(msgSpan);
+      logOutputEl.appendChild(line);
+      logOutputEl.scrollTop = logOutputEl.scrollHeight;
+      if (level === "error") console.error("[WatchMe]", msg);
+      else if (level === "warn") console.warn("[WatchMe]", msg);
+      else console.log("[WatchMe]", msg);
+    }
+
+    function appendChatBubble(role, text) {
+      if (!text) return;
+      const div = document.createElement("div");
+      div.className = "bubble " + role;
+      div.textContent = text;
+      chatLogEl.appendChild(div);
+      chatLogEl.scrollTop = chatLogEl.scrollHeight;
+    }
+
+    function appendSystemBubble(text) {
+      if (!text) return;
+      const div = document.createElement("div");
+      div.className = "bubble system";
+      div.textContent = text;
+      chatLogEl.appendChild(div);
+      chatLogEl.scrollTop = chatLogEl.scrollHeight;
+    }
+
+    function markUserActivity() {
+      lastUserActivityMs = performance.now();
+    }
+
+    function ensureAudioContext() {
+      if (!audioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext || null;
+        if (!Ctx) {
+          log("Web Audio API not supported in this browser.", "error");
+          alert("Web Audio API is not available in this browser.");
+          return null;
+        }
+        audioCtx = new Ctx();
+        audioChipEl.textContent = "running";
+        audioChipEl.style.color = "#bbf7d0";
+        log("AudioContext started @ " + audioCtx.sampleRate + " Hz.");
+      }
+      if (!outputGain && audioCtx) {
+        outputGain = audioCtx.createGain();
+        let gainVal = 1.0;
+        if (aiVolumeEl) {
+          const v = parseInt(aiVolumeEl.value, 10) || 100;
+          gainVal = v / 100;
+        }
+        outputGain.gain.value = gainVal;
+        outputGain.connect(audioCtx.destination);
+      }
+      return audioCtx;
+    }
+
+    function float32ToInt16(float32) {
+      const int16 = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        let s = float32[i];
+        if (s > 1) s = 1;
+        else if (s < -1) s = -1;
+        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return int16;
+    }
+
+    function int16ToBase64(int16) {
+      const bytes = new Uint8Array(int16.buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    }
+
+    function base64ToInt16(base64) {
+      const binary = atob(base64);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new Int16Array(bytes.buffer);
+    }
+
+    function schedulePcmPlaybackFromBase64(base64) {
+      if (!base64) return;
+      const ctx = ensureAudioContext();
+      if (!ctx || !outputGain) return;
+
+      const pcm16 = base64ToInt16(base64);
+      const sampleRate = 24000;
+      const audioBuffer = ctx.createBuffer(1, pcm16.length, sampleRate);
+      const channel = audioBuffer.getChannelData(0);
+      for (let i = 0; i < pcm16.length; i++) {
+        channel[i] = pcm16[i] / 32768;
+      }
+
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(outputGain);
+
+      if (!nextPlaybackTime || nextPlaybackTime < ctx.currentTime) {
+        nextPlaybackTime = ctx.currentTime + 0.05;
+      }
+
+      src.start(nextPlaybackTime);
+      activeAudioSources.push(src);
+      src.onended = () => {
+        const idx = activeAudioSources.indexOf(src);
+        if (idx >= 0) activeAudioSources.splice(idx, 1);
+      };
+
+      nextPlaybackTime += audioBuffer.duration;
+    }
+
+    function handleBargeIn() {
+      if (!activeAudioSources.length) return;
+      const ctx = audioCtx;
+      for (const src of activeAudioSources) {
+        try {
+          src.stop();
+        } catch (_) {}
+      }
+      activeAudioSources = [];
+      if (ctx) {
+        nextPlaybackTime = ctx.currentTime + 0.02;
+      }
+      suppressAssistantTurn = true;
+      lastAssistantTranscriptText = "";
+      log("Barge-in: cut current reply so I listen to you instead.");
+    }
+
+    async function startMic() {
+      if (micStream) return;
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+
+      try {
+        await ctx.resume();
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+
+        micSource = ctx.createMediaStreamSource(micStream);
+        micProcessor = ctx.createScriptProcessor(1024, 1, 1);
+        micGain = ctx.createGain();
+        micGain.gain.value = 0; // no local monitoring
+
+        micSource.connect(micProcessor);
+        micProcessor.connect(micGain);
+        micGain.connect(ctx.destination);
+
+        micProcessor.onaudioprocess = (event) => {
+          if (!liveSession || !isSessionOpen) return;
+          const inputBuffer = event.inputBuffer;
+          const floatData = inputBuffer.getChannelData(0);
+
+          let sumSq = 0;
+          for (let i = 0; i < floatData.length; i++) {
+            const v = floatData[i];
+            sumSq += v * v;
+          }
+          const rms = Math.sqrt(sumSq / floatData.length);
+
+          if (rms > micThreshold) {
+            micSpeakFrameCount++;
+            micSilentFrameCount = 0;
+            if (!isUserSpeaking && micSpeakFrameCount >= MIC_SPEECH_FRAMES_START) {
+              isUserSpeaking = true;
+              markUserActivity();
+              if (activeAudioSources.length > 0) {
+                handleBargeIn();
+              }
+            }
+          } else {
+            micSilentFrameCount++;
+            if (isUserSpeaking && micSilentFrameCount >= MIC_SPEECH_FRAMES_END) {
+              isUserSpeaking = false;
+            }
+          }
+
+          const pcm16 = float32ToInt16(floatData);
+          const base64 = int16ToBase64(pcm16);
+
+          try {
+            liveSession.sendRealtimeInput({
+              audio: {
+                data: base64,
+                mimeType: "audio/pcm;rate=" + ctx.sampleRate
+              }
+            });
+          } catch (err) {
+            log("Failed to send mic audio chunk: " + (err?.message || err), "warn");
+          }
+        };
+
+        micChipEl.textContent = "on";
+        micChipEl.style.color = "#bbf7d0";
+        log("Mic capture started (raw, no echo/noise/AGC).");
+      } catch (err) {
+        log("Failed to start mic: " + (err?.message || err), "error");
+        alert("Microphone access failed. Check browser permissions.");
+      }
+    }
+
+    function stopMic() {
+      if (micProcessor) {
+        micProcessor.disconnect();
+        micProcessor.onaudioprocess = null;
+        micProcessor = null;
+      }
+      if (micGain) {
+        micGain.disconnect();
+        micGain = null;
+      }
+      if (micSource) {
+        micSource.disconnect();
+        micSource = null;
+      }
+      if (micStream) {
+        micStream.getTracks().forEach((t) => t.stop());
+        micStream = null;
+      }
+      micChipEl.textContent = "off";
+      micChipEl.style.color = "#fecaca";
+      log("Mic capture stopped.");
+    }
+
+    async function startScreenShare() {
+      if (screenStream) return;
+      try {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true
+        });
+
+        screenPreview.srcObject = screenStream;
+        await screenPreview.play();
+
+        const vTrack = screenStream.getVideoTracks()[0];
+        const vSettings = vTrack.getSettings();
+        const width = vSettings.width || 1280;
+        const height = vSettings.height || 720;
+
+        screenCanvas.width = Math.floor(width / 2);
+        screenCanvas.height = Math.floor(height / 2);
+
+        updateScreenFpsInterval();
+
+        const aTracks = screenStream.getAudioTracks();
+        if (aTracks && aTracks.length > 0) {
+          const ctx = ensureAudioContext();
+          if (ctx) {
+            await ctx.resume();
+            screenAudioStream = new MediaStream(aTracks);
+            screenAudioSource = ctx.createMediaStreamSource(screenAudioStream);
+            screenAudioProcessor = ctx.createScriptProcessor(1024, 1, 1);
+            screenAudioGain = ctx.createGain();
+            screenAudioGain.gain.value = 0; // no local playback of screen audio
+
+            screenAudioSource.connect(screenAudioProcessor);
+            screenAudioProcessor.connect(screenAudioGain);
+            screenAudioGain.connect(ctx.destination);
+
+            screenAudioProcessor.onaudioprocess = (event) => {
+              if (!liveSession || !isSessionOpen) return;
+              if (!screenAudioEnabled) return;
+
+              const buffer = event.inputBuffer;
+              const floatData = buffer.getChannelData(0);
+
+              let sumSq = 0;
+              for (let i = 0; i < floatData.length; i++) {
+                const v = floatData[i];
+                sumSq += v * v;
+              }
+              const rms = Math.sqrt(sumSq / floatData.length);
+              if (rms < screenAudioThreshold) return;
+
+              const down = floatData.map((v) => v * 0.85);
+              const pcm16 = float32ToInt16(down);
+              const base64 = int16ToBase64(pcm16);
+
+              try {
+                liveSession.sendRealtimeInput({
+                  audio: {
+                    data: base64,
+                    mimeType: "audio/pcm;rate=" + ctx.sampleRate
+                  }
+                });
+              } catch (err) {
+                log("Failed to send screen audio chunk: " + (err?.message || err), "warn");
+              }
+            };
+
+            log("Screen audio capture started.");
+          }
+        } else {
+          log("Screen share: no audio track in stream.");
+        }
+
+        startScreenBtn.disabled = true;
+        stopScreenBtn.disabled = false;
+        screenDot.classList.add("live");
+        screenDot.nextElementSibling.textContent = "On";
+        screenOverlayText.textContent = "Screen live → Gemini.";
+        log("Screen share started.");
+
+        vTrack.addEventListener("ended", () => {
+          stopScreenShare();
+        });
+      } catch (err) {
+        log("Screen share failed: " + (err?.message || err), "error");
+        alert("Screen share was blocked or cancelled.");
+      }
+    }
+
+    function stopScreenShare() {
+      if (screenInterval) {
+        clearInterval(screenInterval);
+        screenInterval = null;
+      }
+      if (screenStream) {
+        screenStream.getTracks().forEach((t) => t.stop());
+        screenStream = null;
+      }
+      screenPreview.srcObject = null;
+
+      if (screenAudioProcessor) {
+        screenAudioProcessor.disconnect();
+        screenAudioProcessor.onaudioprocess = null;
+        screenAudioProcessor = null;
+      }
+      if (screenAudioGain) {
+        screenAudioGain.disconnect();
+        screenAudioGain = null;
+      }
+      if (screenAudioSource) {
+        screenAudioSource.disconnect();
+        screenAudioSource = null;
+      }
+      if (screenAudioStream) {
+        screenAudioStream.getTracks().forEach((t) => t.stop());
+        screenAudioStream = null;
+      }
+
+      screenDot.classList.remove("live");
+      screenDot.nextElementSibling.textContent = "Off";
+      screenOverlayText.textContent = "Not sharing screen.";
+      lastScreenImageData = null;
+      lastScreenChangeMs = 0;
+      lastScreenChangeLevel = 0;
+      startScreenBtn.disabled = false;
+      stopScreenBtn.disabled = true;
+      log("Screen share stopped.");
+    }
+
+    function captureScreenFrame() {
+      if (!screenCanvas || !screenCtx) return;
+      if (!screenPreview.videoWidth || !screenPreview.videoHeight) return;
+
+      screenCtx.drawImage(
+        screenPreview,
+        0,
+        0,
+        screenCanvas.width,
+        screenCanvas.height
+      );
+
+      try {
+        const frame = screenCtx.getImageData(
+          0,
+          0,
+          screenCanvas.width,
+          screenCanvas.height
+        );
+        if (lastScreenImageData) {
+          let diffSum = 0;
+          let samples = 0;
+          const data = frame.data;
+          const prev = lastScreenImageData.data;
+          for (let i = 0; i < data.length; i += 4 * 12) {
+            const dr = data[i] - prev[i];
+            const dg = data[i + 1] - prev[i + 1];
+            const db = data[i + 2] - prev[i + 2];
+            const delta = Math.abs(dr) + Math.abs(dg) + Math.abs(db);
+            diffSum += delta;
+            samples++;
+          }
+          const avgDiff = diffSum / (samples || 1);
+          if (avgDiff > 12) {
+            lastScreenChangeMs = performance.now();
+            lastScreenChangeLevel = avgDiff;
+          }
+        }
+        lastScreenImageData = frame;
+      } catch (_) {
+        // cross-origin; ignore diff metrics
+      }
+
+      screenCanvas.toBlob(
+        (blob) => {
+          if (!blob || !liveSession || !isSessionOpen) return;
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const dataUrl = reader.result;
+            const base64 = dataUrl.split(",")[1];
+            try {
+              liveSession.sendRealtimeInput({
+                video: {
+                  data: base64,
+                  mimeType: blob.type || "image/jpeg"
+                }
+              });
+            } catch (err) {
+              log("Failed to send video frame: " + (err?.message || err), "warn");
+            }
+          };
+          reader.readAsDataURL(blob);
+        },
+        "image/jpeg",
+        0.85
+      );
+    }
+
+    function updateScreenFpsInterval() {
+      if (screenInterval) {
+        clearInterval(screenInterval);
+        screenInterval = null;
+      }
+      if (!screenStream) return;
+      let fps = parseInt(fpsSelect.value, 10);
+      if (!fps || fps < 2) fps = 4;
+      const intervalMs = Math.round(1000 / fps);
+      screenInterval = setInterval(captureScreenFrame, intervalMs);
+      log("Screen FPS set to ~" + fps + " (" + intervalMs + " ms).");
+    }
+
+    function screenChangedRecently(windowMs = 12000, minLevel = 0) {
+      if (!lastScreenChangeMs) return false;
+      const age = performance.now() - lastScreenChangeMs;
+      if (age > windowMs) return false;
+      if (lastScreenChangeLevel < minLevel) return false;
+      return true;
+    }
+
+    function updateSessionStatus(active) {
+      isSessionOpen = active;
+      if (active) {
+        sessionStatusEl.classList.add("live");
+        sessionStatusEl.innerHTML =
+          '<span class="status-dot"></span><span>Session live</span>';
+      } else {
+        sessionStatusEl.classList.remove("live");
+        sessionStatusEl.innerHTML =
+          '<span class="status-dot"></span><span>Session idle</span>';
+      }
+      updateLivelinessTimer();
+    }
+
+    function updateLivelinessTimer() {
+      if (livelyEnabled && isSessionOpen) {
+        if (!livelyTimer) {
+          livelyTimer = setInterval(checkLiveliness, 900);
+        }
+      } else if (livelyTimer) {
+        clearInterval(livelyTimer);
+        livelyTimer = null;
+      }
+    }
+
+    function scheduleNextLively(now = performance.now()) {
+      const mode = (livelyModeEl?.value || "normal").toLowerCase();
+      const profile = LivelyProfiles[mode] || LivelyProfiles.normal;
+      const span =
+        profile.minGapMs +
+        Math.random() * (profile.maxGapMs - profile.minGapMs);
+      nextLivelyAtMs = now + span;
+    }
+
+    function checkLiveliness() {
+      if (!liveSession || !isSessionOpen) return;
+      if (!livelyEnabled) return;
+      if (pendingFocus) return;
+
+      const now = performance.now();
+      const mode = (livelyModeEl?.value || "normal").toLowerCase();
+      const profile = LivelyProfiles[mode] || LivelyProfiles.normal;
+
+      if (now - lastUserActivityMs < profile.idleMs) return;
+      if (nextLivelyAtMs && now < nextLivelyAtMs) return;
+
+      const hasScreenContext = !!screenStream;
+      const strongChange = screenChangedRecently(8000, 20);
+      const anyChange    = screenChangedRecently(12000, 12);
+
+      if (!hasScreenContext && !anyChange) {
+        scheduleNextLively(now);
+        return;
+      }
+
+      if (!anyChange) {
+        if (now - lastAutoCommentMs < 25000) {
+          scheduleNextLively(now);
+          return;
+        }
+      }
+
+      let prompt;
+      if (strongChange) {
+        prompt =
+          "Give a natural spoken comment about what has clearly changed on my screen in the last several seconds. " +
+          "Talk like a co-op partner. Use recent visual and audio context, and vary your length based on how much is going on. " +
+          "Do not keep saying that the video or game is pausing or resuming unless I explicitly ask.";
+      } else if (anyChange) {
+        prompt =
+          "Give a short to medium spoken comment or suggestion based on the last several seconds of what you see and hear. " +
+          "Add something genuinely useful or interesting; do not repeat earlier commentary or narrate tiny UI flickers.";
+      } else {
+        prompt =
+          "Only speak if you have something genuinely new or useful to say about what you're seeing and hearing from the last few seconds. " +
+          "If there is basically nothing new, respond with at most a very brief remark.";
+      }
+
+      try {
+        liveSession.sendClientContent({
+          turns: [{ role: "user", parts: [{ text: prompt }] }],
+          turnComplete: true
+        });
+        lastAutoCommentMs = now;
+        log("Auto commentary prompt sent.");
+      } catch (err) {
+        log("Failed to send auto commentary prompt: " + (err?.message || err), "warn");
+      }
+
+      scheduleNextLively(now);
+    }
+
+    function detectFocusType(textLower) {
+      if (!textLower) return null;
+      if (/\bkeep going\b/.test(textLower)) return "keep-going";
+      if (/what\s+song\s+is\s+playing/.test(textLower)) return "song";
+      if (/what'?s\s+this\s+song\b/.test(textLower)) return "song";
+      if (/listen\s+to\s+the\s+(audio|sound|music)/.test(textLower)) return "audio";
+      if (/look\s+at\s+(the\s+)?(screen|game|window)/.test(textLower)) return "screen";
+      if (/what'?s\s+going\s+on\s+(on\s+)?(the\s+)?(screen|game)/.test(textLower)) return "screen";
+      return null;
+    }
+
+    function sendFocusQuestion(focus) {
+      if (!focus || !liveSession || !isSessionOpen) return;
+      const kind = focus.kind;
+      let extra = "";
+
+      if (kind === "song") {
+        extra =
+          " If you can identify the song from the last several seconds of audio, give artist and track; if you're not sure, say clearly that you can't tell.";
+      } else if (kind === "audio") {
+        extra =
+          " Base your answer mainly on the last 5–10 seconds of system audio, not just my voice.";
+      } else if (kind === "screen") {
+        extra =
+          " Base your answer mainly on what has been visible on my screen in roughly the last 5–10 seconds, not a single frozen frame.";
+      }
+
+      const prompt =
+        "You just spent several seconds watching my screen and listening to recent audio. " +
+        "Now answer this request using that recent 5–10 second context:\n\n" +
+        "\"" + focus.text.trim() + "\"" + extra;
+
+      try {
+        liveSession.sendClientContent({
+          turns: [{ role: "user", parts: [{ text: prompt }] }],
+          turnComplete: true
+        });
+        log("Sent delayed focus request for: \"" + focus.text + "\"");
+      } catch (err) {
+        log("Failed to send focus request: " + (err?.message || err), "warn");
+      }
+    }
+
+    function scheduleFocus(text, kind) {
+      if (!text) return;
+      pendingFocus = { text, kind, createdAt: performance.now() };
+      if (focusTimeoutId) {
+        clearTimeout(focusTimeoutId);
+      }
+      const wait = 5000 + Math.random() * 5000;
+      focusTimeoutId = setTimeout(() => {
+        const focus = pendingFocus;
+        pendingFocus = null;
+        focusTimeoutId = null;
+        sendFocusQuestion(focus);
+      }, wait);
+    }
+
+    function maybeHandleFocusCommand(text) {
+      if (!text) return;
+      const lower = text.toLowerCase();
+      const kind = detectFocusType(lower);
+      if (!kind) return;
+
+      if (kind === "keep-going") {
+        livelyEnabled = true;
+        if (livelyToggleEl) livelyToggleEl.checked = true;
+        if (livelyModeEl) livelyModeEl.value = "hyper";
+        log("Command: keep going → continuous live commentary (hyper).");
+        if (isSessionOpen) {
+          scheduleNextLively(performance.now());
+          updateLivelinessTimer();
+        }
+        return;
+      }
+
+      scheduleFocus(text, kind);
+      log("Command: " + kind + " focus. Watching/listening ~5–10s, then answering it.");
+    }
+
+    function handleLiveMessage(message) {
+      try {
+        if (message.data) {
+          schedulePcmPlaybackFromBase64(message.data);
+        }
+
+        if (
+          message.serverContent &&
+          message.serverContent.outputTranscription
+        ) {
+          const t = message.serverContent.outputTranscription;
+          if (!suppressAssistantTurn) {
+            if (t.text) {
+              lastAssistantTranscriptText = t.text;
+            }
+            if (t.finished === true && lastAssistantTranscriptText.trim()) {
+              appendChatBubble("assistant", lastAssistantTranscriptText.trim());
+              lastAssistantTranscriptText = "";
+            }
+          }
+        }
+
+        if (
+          message.serverContent &&
+          message.serverContent.inputTranscription
+        ) {
+          const t = message.serverContent.inputTranscription;
+          const text = t.text || "";
+          if (text) {
+            lastUserTranscriptText = text;
+          }
+
+          const trimmed = text.trim();
+          const hasText = trimmed.length > 0;
+          const wordCount = hasText ? trimmed.split(/\s+/).length : 0;
+
+          if (!t.finished && hasText) {
+            if (isUserSpeaking && wordCount >= 2 && activeAudioSources.length > 0) {
+              handleBargeIn();
+            }
+            markUserActivity();
+          }
+
+          if (t.finished === true && lastUserTranscriptText.trim()) {
+            markUserActivity();
+            const finalText = lastUserTranscriptText.trim();
+            appendChatBubble("user", finalText);
+            maybeHandleFocusCommand(finalText);
+            lastUserTranscriptText = "";
+          }
+        }
+
+        if (
+          message.serverContent &&
+          message.serverContent.turnComplete === true
+        ) {
+          if (suppressAssistantTurn) {
+            suppressAssistantTurn = false;
+            lastAssistantTranscriptText = "";
+            log("Skipped displaying interrupted assistant turn.");
+          } else {
+            log("Model turn complete.");
+          }
+        }
+      } catch (err) {
+        log("Error handling Live message: " + (err?.message || err), "warn");
+      }
+    }
+
+    async function startSession() {
+      if (liveSession) {
+        log("Live session already open.");
+        return;
+      }
+      try {
+        const ctx = ensureAudioContext();
+        if (!ctx) return;
+        await ctx.resume();
+
+        if (!ai) {
+          ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+        }
+
+        appendSystemBubble(
+          "Session starting. I see your screen snapshots and hear your mic (plus screen audio if you share it). " +
+          "If you talk while I’m talking, I’ll cut myself off and listen."
+        );
+
+        const voiceName = (voiceSelectEl?.value || "").trim();
+
+        const systemText =
+          "You are an engaging co-commentator for the user's games and apps. " +
+          "You see a low-FPS video feed of their screen and hear two audio sources: their microphone (primary) and any system audio from the shared screen (secondary). " +
+          "Always treat the user's spoken words as the main signal and background/system audio as context only.\n\n" +
+          "The client may stop playing your audio when the user starts speaking (barge-in). Once you sense the user talking again, treat your previous response as cut off and focus on the new request.\n\n" +
+          "Use several seconds of recent visual and audio context for every answer, not a single frozen frame. " +
+          "Do not repeatedly say the video or game is pausing and playing again unless the user explicitly asks.\n\n" +
+          "Special commands:\n" +
+          "• “look at the screen”, “watch the screen”, “listen to the audio”, “what song is playing”, “what's going on right now” → use the last 5–10 seconds of screen/audio as your main context before answering.\n" +
+          "• “keep going” → continuous live commentary; keep reacting without waiting for long silence.\n\n" +
+          "Prefer confident statements over questions. Vary commentary length based on how much is happening. If there is nothing meaningful to say, stay brief instead of rambling.";
+
+        const config = {
+          responseModalities: [Modality.AUDIO],
+          systemInstruction: {
+            parts: [{ text: systemText }]
+          },
+          outputAudioTranscription: {},
+          inputAudioTranscription: {},
+          thinkingConfig: {
+            thinkingBudget: 256
+          }
+        };
+
+        if (voiceName) {
+          config.speechConfig = {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: voiceName
+              }
+            },
+            languageCode: ""
+          };
+        }
+
+        log("Connecting to Gemini Live API…");
+        liveSession = await ai.live.connect({
+          model: GEMINI_MODEL,
+          config,
+          callbacks: {
+            onopen: () => {
+              log("Live session opened.");
+              updateSessionStatus(true);
+              startSessionBtn.disabled = true;
+              stopSessionBtn.disabled = false;
+              lastUserActivityMs = performance.now();
+              scheduleNextLively(lastUserActivityMs);
+            },
+            onmessage: (message) => {
+              handleLiveMessage(message);
+            },
+            onerror: (e) => {
+              log(
+                "Live session error: " + (e?.message || JSON.stringify(e)),
+                "error"
+              );
+            },
+            onclose: (e) => {
+              log(
+                "Live session closed: " + (e?.reason || "no reason provided")
+              );
+              updateSessionStatus(false);
+              startSessionBtn.disabled = false;
+              stopSessionBtn.disabled = true;
+              liveSession = null;
+            }
+          }
+        });
+
+        await startMic();
+        log("Session + mic ready. Talk and it will answer in voice.");
+      } catch (err) {
+        log("Failed to connect Live session: " + (err?.message || err), "error");
+        alert("Could not open Gemini Live session. Check console/network and your API key.");
+      }
+    }
+
+    function stopSession() {
+      try {
+        if (liveSession) {
+          liveSession.close();
+          liveSession = null;
+        }
+      } catch (err) {
+        log("Error while closing live session: " + (err?.message || err), "warn");
+      }
+      stopMic();
+      stopScreenShare();
+      updateSessionStatus(false);
+      startSessionBtn.disabled = false;
+      stopSessionBtn.disabled = true;
+      nextPlaybackTime = 0;
+      activeAudioSources = [];
+      lastUserTranscriptText = "";
+      lastAssistantTranscriptText = "";
+      suppressAssistantTurn = false;
+      if (focusTimeoutId) {
+        clearTimeout(focusTimeoutId);
+        focusTimeoutId = null;
+        pendingFocus = null;
+      }
+      log("Session fully stopped.");
+    }
+
+    function sendTextMessage() {
+      const text = textInputEl.value.trim();
+      if (!text) return;
+      textInputEl.value = "";
+      appendChatBubble("user", text);
+      markUserActivity();
+      maybeHandleFocusCommand(text);
+      if (!liveSession || !isSessionOpen) {
+        log("No active session. Start the AI session first.", "warn");
+        return;
+      }
+      try {
+        liveSession.sendClientContent({
+          turns: [{ role: "user", parts: [{ text }] }],
+          turnComplete: true
+        });
+        log("Sent text turn.");
+      } catch (err) {
+        log("Failed to send text turn: " + (err?.message || err), "error");
+      }
+    }
+
+    startSessionBtn.addEventListener("click", () => {
+      startSession();
+    });
+
+    stopSessionBtn.addEventListener("click", () => {
+      stopSession();
+    });
+
+    startScreenBtn.addEventListener("click", () => {
+      startScreenShare();
+    });
+
+    stopScreenBtn.addEventListener("click", () => {
+      stopScreenShare();
+    });
+
+    fpsSelect.addEventListener("change", () => {
+      updateScreenFpsInterval();
+    });
+
+    sendTextBtn.addEventListener("click", () => {
+      sendTextMessage();
+    });
+
+    textInputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendTextMessage();
+      }
+    });
+
+    if (livelyToggleEl) {
+      livelyToggleEl.addEventListener("change", () => {
+        livelyEnabled = livelyToggleEl.checked;
+        log(
+          "Auto commentary " +
+            (livelyEnabled
+              ? "enabled."
+              : "disabled (I will answer only when you speak or type).")
+        );
+        if (isSessionOpen) {
+          scheduleNextLively(performance.now());
+        }
+        updateLivelinessTimer();
+      });
+    }
+
+    if (livelyModeEl) {
+      livelyModeEl.addEventListener("change", () => {
+        const mode = livelyModeEl.value;
+        log("Commentary intensity set to: " + mode + ".");
+        if (isSessionOpen) {
+          scheduleNextLively(performance.now());
+        }
+      });
+    }
+
+    if (voiceSelectEl) {
+      voiceSelectEl.addEventListener("change", () => {
+        const v = voiceSelectEl.value || "model default";
+        log("Voice preference set to: " + v + " (applies next session).");
+      });
+    }
+
+    if (screenAudioToggleEl) {
+      screenAudioToggleEl.addEventListener("change", () => {
+        screenAudioEnabled = screenAudioToggleEl.checked;
+        log(
+          "Screen audio → Gemini " +
+            (screenAudioEnabled
+              ? "enabled (it will hear game/tab audio when you are not muted by the OS)."
+              : "disabled (only your mic is sent).")
+        );
+      });
+    }
+
+    if (micSensitivityEl) {
+      micSensitivityEl.addEventListener("change", () => {
+        const v = micSensitivityEl.value;
+        if (v === "high") {
+          micThreshold = 0.009;
+        } else if (v === "low") {
+          micThreshold = 0.025;
+        } else {
+          micThreshold = MIC_RMS_THRESHOLD_DEFAULT;
+        }
+        log("Mic VAD sensitivity set to: " + v + ".");
+      });
+    }
+
+    if (screenAudioSensitivityEl) {
+      screenAudioSensitivityEl.addEventListener("change", () => {
+        const v = screenAudioSensitivityEl.value;
+        if (v === "high") {
+          screenAudioThreshold = 0.005;
+        } else if (v === "low") {
+          screenAudioThreshold = 0.02;
+        } else {
+          screenAudioThreshold = SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT;
+        }
+        log("Screen audio sensitivity set to: " + v + ".");
+      });
+    }
+
+    if (aiVolumeEl) {
+      aiVolumeEl.addEventListener("input", () => {
+        const v = parseInt(aiVolumeEl.value, 10) || 100;
+        if (outputGain) {
+          outputGain.gain.value = v / 100;
+        }
+      });
+    }
+
+    (function init() {
+      try {
+        ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+        log("Gemini client ready with your API key.");
+      } catch (err) {
+        log("Failed to initialise Gemini client: " + (err?.message || err), "error");
+      }
+      appendSystemBubble(
+        "Start the AI session, allow mic, optionally share a game window with audio, and talk. " +
+        "I keep pulling screen frames every fraction of a second; I only cut myself off when your mic clearly starts talking."
+      );
+    })();
+  </script>
+</body>
+</html>
