@@ -732,6 +732,14 @@
             </select>
           </div>
           <div class="control-row">
+            <span class="label">Response length</span>
+            <select id="responseLength">
+              <option value="balanced" selected>Balanced</option>
+              <option value="snappy">Snappy (short)</option>
+              <option value="detailed">Detailed (longer)</option>
+            </select>
+          </div>
+          <div class="control-row">
             <span class="label">Screen FPS</span>
             <select id="fpsSelect">
               <option value="4">~4 FPS</option>
@@ -823,10 +831,14 @@
       hyper:  { idleMs: 2000, minGapMs: 4000,  maxGapMs: 8000 }
     };
 
-    const MIC_SPEECH_FRAMES_START = 3;
-    const MIC_SPEECH_FRAMES_END   = 8;
     const MIC_RMS_THRESHOLD_DEFAULT = 0.015;
-    const SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT = 0.01;
+    const MIC_SPEECH_HOLD_MS = 1100;
+    const MIC_SILENCE_RELEASE_MS = 650;
+    const MIC_BACKFILL_MAX_MS = 900;
+    const ASSISTANT_MIN_PLAY_BEFORE_CUT_MS = 1400;
+    const ASSISTANT_RECENT_FINISH_HOLD_MS = 900;
+    const SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT = 0.006;
+    const SCREEN_AUDIO_SILENCE_KEEPALIVE_MS = 1200;
 
     let micThreshold = MIC_RMS_THRESHOLD_DEFAULT;
     let screenAudioThreshold = SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT;
@@ -845,8 +857,11 @@
     let micProcessor = null;
     let micGain = null;
     let isUserSpeaking = false;
-    let micSpeakFrameCount = 0;
-    let micSilentFrameCount = 0;
+    let micFrameDurationMs = 0;
+    let micSpeechAccumMs = 0;
+    let micSilenceAccumMs = 0;
+    let micChunkBacklog = [];
+    let micChunkBacklogMs = 0;
 
     let screenStream = null;
     let screenCanvas = null;
@@ -858,6 +873,15 @@
     let screenAudioSource = null;
     let screenAudioProcessor = null;
     let screenAudioGain = null;
+    let screenAudioSilenceMs = 0;
+
+    let lastScreenFrameSentMs = 0;
+    let lastScreenFrameFailureMs = 0;
+    let lastScreenFrameFailureMsg = "";
+    let lastScreenFrameFailureLogMs = 0;
+    let lastScreenAudioChunkMs = 0;
+    let screenAudioWarningActive = false;
+    let lastScreenAudioWarningMs = 0;
 
     let lastScreenFrameSentMs = 0;
     let lastScreenFrameFailureMs = 0;
@@ -883,9 +907,16 @@
     let lastUserTranscriptText = "";
     let lastAssistantTranscriptText = "";
     let suppressAssistantTurn = false;
+    let assistantTalking = false;
+    let assistantSpeechStartMs = 0;
+    let assistantLastFinishMs = 0;
+    let assistantLastCutOffMs = 0;
 
     let pendingFocus = null;
     let focusTimeoutId = null;
+    let responseLengthMode = "balanced";
+    let browserFlavorChecked = false;
+    let detectedBrowserFlavor = null;
 
     const startSessionBtn   = document.getElementById("startSessionBtn");
     const stopSessionBtn    = document.getElementById("stopSessionBtn");
@@ -911,6 +942,7 @@
 
     const livelyToggleEl    = document.getElementById("livelyToggle");
     const livelyModeEl      = document.getElementById("livelyMode");
+    const responseLengthEl  = document.getElementById("responseLength");
     const voiceSelectEl     = document.getElementById("voiceSelect");
     const micSensitivityEl  = document.getElementById("micSensitivity");
     const screenAudioSensitivityEl = document.getElementById("screenAudioSensitivity");
@@ -1071,11 +1103,66 @@
       return hints.join(" ");
     }
 
+    function buildResponseStyleHint() {
+      switch (responseLengthMode) {
+        case "snappy":
+          return "Keep your spoken reply tight — about one or two sentences unless I ask for more detail.";
+        case "detailed":
+          return "Feel free to give a longer, multi-sentence spoken reply when you have enough context, covering visuals and useful pointers.";
+        default:
+          return "";
+      }
+    }
+
     function markUserActivity() {
       lastUserActivityMs = performance.now();
     }
 
+    function detectBrowserFlavor() {
+      if (detectedBrowserFlavor) return detectedBrowserFlavor;
+      const ua = navigator.userAgent || "";
+      const isEdge = /\bEdg\//.test(ua);
+      const isBrave = /\bBrave\//i.test(ua) || typeof navigator.brave !== "undefined";
+      if (isEdge) {
+        detectedBrowserFlavor = {
+          flavor: "edge",
+          description:
+            "Edge detected — capture chain locked to low-latency mode."
+        };
+      } else if (isBrave) {
+        detectedBrowserFlavor = {
+          flavor: "brave",
+          description:
+            "Brave detected — if audio mutes, check the Shields icon for capture permissions."
+        };
+      } else {
+        detectedBrowserFlavor = {
+          flavor: "other",
+          description:
+            "Best results come from Edge or Brave right now; other Chromium browsers might throttle tab audio."
+        };
+      }
+      return detectedBrowserFlavor;
+    }
+
     function ensureAudioContext() {
+      if (!browserFlavorChecked) {
+        browserFlavorChecked = true;
+        const info = detectBrowserFlavor();
+        if (info?.flavor === "edge") {
+          log("Microsoft Edge detected — tuned for its capture pipeline.");
+        } else if (info?.flavor === "brave") {
+          log("Brave detected — tuned for Chromium-based capture with privacy guards.");
+        } else {
+          log(
+            "Tip: Edge or Brave currently give the steadiest mic + system audio feeds. If things feel choppy, try one of those browsers.",
+            "warn"
+          );
+        }
+        if (info?.description) {
+          appendSystemBubble(info.description);
+        }
+      }
       if (!audioCtx) {
         const Ctx = window.AudioContext || window.webkitAudioContext || null;
         if (!Ctx) {
@@ -1110,6 +1197,40 @@
         int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
       return int16;
+    }
+
+    function sendMicChunk(base64, ctx) {
+      if (!base64 || !ctx) return;
+      if (!liveSession || !isSessionOpen) return;
+      try {
+        liveSession.sendRealtimeInput({
+          audio: {
+            data: base64,
+            mimeType: "audio/pcm;rate=" + ctx.sampleRate
+          }
+        });
+      } catch (err) {
+        log("Failed to send mic audio chunk: " + (err?.message || err), "warn");
+      }
+    }
+
+    function enqueueMicBacklog(base64, frameMs) {
+      if (!base64 || !frameMs) return;
+      micChunkBacklog.push({ base64, frameMs });
+      micChunkBacklogMs += frameMs;
+      while (micChunkBacklogMs > MIC_BACKFILL_MAX_MS && micChunkBacklog.length > 0) {
+        const removed = micChunkBacklog.shift();
+        micChunkBacklogMs -= removed.frameMs;
+      }
+    }
+
+    function flushMicBacklog(ctx) {
+      if (!micChunkBacklog.length) return;
+      for (const chunk of micChunkBacklog) {
+        sendMicChunk(chunk.base64, ctx);
+      }
+      micChunkBacklog = [];
+      micChunkBacklogMs = 0;
     }
 
     function int16ToBase64(int16) {
@@ -1152,18 +1273,44 @@
         nextPlaybackTime = ctx.currentTime + 0.05;
       }
 
+      const now = performance.now();
+      if (!assistantTalking) {
+        assistantTalking = true;
+        assistantSpeechStartMs = now;
+      }
+      assistantLastFinishMs = 0;
+      assistantLastCutOffMs = 0;
+
       src.start(nextPlaybackTime);
       activeAudioSources.push(src);
       src.onended = () => {
         const idx = activeAudioSources.indexOf(src);
         if (idx >= 0) activeAudioSources.splice(idx, 1);
+        if (activeAudioSources.length === 0) {
+          assistantTalking = false;
+          assistantSpeechStartMs = 0;
+          assistantLastFinishMs = performance.now();
+        }
       };
 
       nextPlaybackTime += audioBuffer.duration;
     }
 
-    function handleBargeIn() {
+    function handleBargeIn(reason = "mic", payload = null) {
       if (!activeAudioSources.length) return;
+      const now = performance.now();
+      const sinceStart = assistantTalking
+        ? now - assistantSpeechStartMs
+        : Infinity;
+      if (reason !== "mic" && sinceStart < ASSISTANT_MIN_PLAY_BEFORE_CUT_MS) {
+        return;
+      }
+      if (reason === "transcript") {
+        const wordCount = typeof payload === "number" ? payload : 0;
+        if (wordCount < 2 && sinceStart < ASSISTANT_MIN_PLAY_BEFORE_CUT_MS) {
+          return;
+        }
+      }
       const ctx = audioCtx;
       for (const src of activeAudioSources) {
         try {
@@ -1176,7 +1323,21 @@
       }
       suppressAssistantTurn = true;
       lastAssistantTranscriptText = "";
-      log("Barge-in: cut current reply so I listen to you instead.");
+      assistantTalking = false;
+      assistantSpeechStartMs = 0;
+      assistantLastCutOffMs = now;
+      assistantLastFinishMs = now;
+      const reasonLabel =
+        reason === "transcript"
+          ? "barge-in from recognized speech"
+          : reason === "mic"
+          ? "barge-in from mic signal"
+          : "barge-in";
+      log(
+        "Barge-in: cut current reply so I listen to you instead (" +
+          reasonLabel +
+          ")."
+      );
     }
 
     async function startMic() {
@@ -1200,6 +1361,12 @@
         micGain = ctx.createGain();
         micGain.gain.value = 0; // no local monitoring
 
+        micFrameDurationMs = (micProcessor.bufferSize / ctx.sampleRate) * 1000;
+        micSpeechAccumMs = 0;
+        micSilenceAccumMs = 0;
+        micChunkBacklog = [];
+        micChunkBacklogMs = 0;
+
         micSource.connect(micProcessor);
         micProcessor.connect(micGain);
         micGain.connect(ctx.destination);
@@ -1215,36 +1382,49 @@
             sumSq += v * v;
           }
           const rms = Math.sqrt(sumSq / floatData.length);
-
-          if (rms > micThreshold) {
-            micSpeakFrameCount++;
-            micSilentFrameCount = 0;
-            if (!isUserSpeaking && micSpeakFrameCount >= MIC_SPEECH_FRAMES_START) {
-              isUserSpeaking = true;
-              markUserActivity();
-              if (activeAudioSources.length > 0) {
-                handleBargeIn();
-              }
-            }
-          } else {
-            micSilentFrameCount++;
-            if (isUserSpeaking && micSilentFrameCount >= MIC_SPEECH_FRAMES_END) {
-              isUserSpeaking = false;
-            }
-          }
+          const frameMs =
+            micFrameDurationMs || (floatData.length / ctx.sampleRate) * 1000;
 
           const pcm16 = float32ToInt16(floatData);
           const base64 = int16ToBase64(pcm16);
 
-          try {
-            liveSession.sendRealtimeInput({
-              audio: {
-                data: base64,
-                mimeType: "audio/pcm;rate=" + ctx.sampleRate
+          if (rms > micThreshold) {
+            if (!isUserSpeaking) {
+              micSpeechAccumMs += frameMs;
+              micSilenceAccumMs = 0;
+              enqueueMicBacklog(base64, frameMs);
+              if (micSpeechAccumMs >= MIC_SPEECH_HOLD_MS) {
+                isUserSpeaking = true;
+                micSilenceAccumMs = 0;
+                markUserActivity();
+                if (activeAudioSources.length > 0) {
+                  handleBargeIn("mic");
+                }
+                flushMicBacklog(ctx);
               }
-            });
-          } catch (err) {
-            log("Failed to send mic audio chunk: " + (err?.message || err), "warn");
+            } else {
+              micSilenceAccumMs = 0;
+              sendMicChunk(base64, ctx);
+            }
+          } else {
+            if (!isUserSpeaking) {
+              micSpeechAccumMs = Math.max(0, micSpeechAccumMs - frameMs * 0.6);
+              micSilenceAccumMs += frameMs;
+              enqueueMicBacklog(base64, frameMs);
+            } else {
+              micSilenceAccumMs += frameMs;
+              sendMicChunk(base64, ctx);
+            }
+
+            if (micSilenceAccumMs >= MIC_SILENCE_RELEASE_MS) {
+              if (isUserSpeaking) {
+                isUserSpeaking = false;
+              }
+              micSpeechAccumMs = 0;
+              micSilenceAccumMs = 0;
+              micChunkBacklog = [];
+              micChunkBacklogMs = 0;
+            }
           }
         };
 
@@ -1275,6 +1455,11 @@
         micStream.getTracks().forEach((t) => t.stop());
         micStream = null;
       }
+      micSpeechAccumMs = 0;
+      micSilenceAccumMs = 0;
+      micChunkBacklog = [];
+      micChunkBacklogMs = 0;
+      isUserSpeaking = false;
       micChipEl.textContent = "off";
       micChipEl.style.color = "#fecaca";
       log("Mic capture stopped.");
@@ -1328,6 +1513,7 @@
 
               const buffer = event.inputBuffer;
               const floatData = buffer.getChannelData(0);
+              const frameMs = (floatData.length / ctx.sampleRate) * 1000;
 
               let sumSq = 0;
               for (let i = 0; i < floatData.length; i++) {
@@ -1335,8 +1521,34 @@
                 sumSq += v * v;
               }
               const rms = Math.sqrt(sumSq / floatData.length);
-              if (rms < screenAudioThreshold) return;
+              const audibleThreshold = Math.max(screenAudioThreshold * 0.6, 0.0015);
+              const isAudible = rms >= audibleThreshold;
 
+              if (isAudible) {
+                screenAudioSilenceMs = 0;
+              } else {
+                screenAudioSilenceMs += frameMs;
+              }
+
+              let shouldSend = isAudible;
+              if (!shouldSend && screenAudioSilenceMs >= SCREEN_AUDIO_SILENCE_KEEPALIVE_MS) {
+                shouldSend = true;
+                screenAudioSilenceMs = 0;
+              }
+
+              if (!shouldSend) return;
+
+              lastScreenAudioChunkMs = performance.now();
+              updateScreenStatusUi();
+
+              if (!liveSession || !isSessionOpen) return;
+
+              const scale = isAudible ? 0.85 : 1.0;
+              const down = new Float32Array(floatData.length);
+              for (let i = 0; i < floatData.length; i++) {
+                const scaled = floatData[i] * scale;
+                down[i] = Math.max(-1, Math.min(1, scaled));
+              }
               lastScreenAudioChunkMs = performance.now();
               updateScreenStatusUi();
               if (!liveSession || !isSessionOpen) return;
@@ -1421,6 +1633,7 @@
       lastScreenAudioChunkMs = 0;
       screenAudioWarningActive = false;
       lastScreenAudioWarningMs = 0;
+      screenAudioSilenceMs = 0;
       startScreenBtn.disabled = false;
       stopScreenBtn.disabled = true;
       updateScreenStatusUi();
@@ -1587,6 +1800,19 @@
       if (pendingFocus) return;
 
       const now = performance.now();
+      if (assistantTalking) return;
+      if (
+        assistantLastFinishMs &&
+        now - assistantLastFinishMs < ASSISTANT_RECENT_FINISH_HOLD_MS
+      ) {
+        return;
+      }
+      if (
+        assistantLastCutOffMs &&
+        now - assistantLastCutOffMs < ASSISTANT_RECENT_FINISH_HOLD_MS
+      ) {
+        return;
+      }
       const mode = (livelyModeEl?.value || "normal").toLowerCase();
       const profile = LivelyProfiles[mode] || LivelyProfiles.normal;
 
@@ -1654,6 +1880,11 @@
         prompt += " " + contextHints;
       }
 
+      const styleHint = buildResponseStyleHint();
+      if (styleHint) {
+        prompt += " " + styleHint;
+      }
+
       try {
         liveSession.sendClientContent({
           turns: [{ role: "user", parts: [{ text: prompt }] }],
@@ -1681,6 +1912,21 @@
 
     function sendFocusQuestion(focus) {
       if (!focus || !liveSession || !isSessionOpen) return;
+      const now = performance.now();
+      if (
+        assistantTalking ||
+        (assistantLastFinishMs && now - assistantLastFinishMs < ASSISTANT_RECENT_FINISH_HOLD_MS)
+      ) {
+        pendingFocus = focus;
+        focusTimeoutId = setTimeout(() => {
+          const queued = pendingFocus;
+          pendingFocus = null;
+          focusTimeoutId = null;
+          sendFocusQuestion(queued);
+        }, 800);
+        return;
+      }
+
       const kind = focus.kind;
       let extra = "";
 
@@ -1698,6 +1944,11 @@
       const contextHints = buildContextHints();
       if (contextHints) {
         extra += " " + contextHints;
+      }
+
+      const styleHint = buildResponseStyleHint();
+      if (styleHint) {
+        extra += " " + styleHint;
       }
 
       const prompt =
@@ -1791,7 +2042,7 @@
 
           if (!t.finished && hasText) {
             if (isUserSpeaking && wordCount >= 2 && activeAudioSources.length > 0) {
-              handleBargeIn();
+              handleBargeIn("transcript", wordCount);
             }
             markUserActivity();
           }
@@ -1846,7 +2097,9 @@
         const systemText =
           "You are an engaging co-commentator for the user's games and apps. " +
           "You see a low-FPS video feed of their screen and hear two audio sources: their microphone (primary) and any system audio from the shared screen (secondary). " +
-          "Always treat the user's spoken words as the main signal and background/system audio as context only.\n\n" +
+          "Always treat the user's spoken words as the main signal and background/system audio as context only. " +
+          "The client waits for roughly a second of sustained speech before treating the mic as an intentional turn, so ignore stray syllables or random noises.\n" +
+          "Only stop yourself mid-reply when the user clearly interrupts — rapid screen changes alone are not a reason to cut your own sentence short.\n\n" +
           "The client may stop playing your audio when the user starts speaking (barge-in). Once you sense the user talking again, treat your previous response as cut off and focus on the new request.\n\n" +
           "Use several seconds of recent visual and audio context for every answer, not a single frozen frame. " +
           "Do not repeatedly say the video or game is pausing and playing again unless the user explicitly asks.\n\n" +
@@ -1855,7 +2108,8 @@
           "Special commands:\n" +
           "• “look at the screen”, “watch the screen”, “listen to the audio”, “what song is playing”, “what's going on right now” → use the last 5–10 seconds of screen/audio as your main context before answering.\n" +
           "• “keep going” → continuous live commentary; keep reacting without waiting for long silence.\n\n" +
-          "Prefer confident statements over questions. Vary commentary length based on how much is happening. If there is nothing meaningful to say, stay brief instead of rambling.";
+          "Prefer confident statements over questions. Vary commentary length based on how much is happening. If there is nothing meaningful to say, stay brief instead of rambling. " +
+          "If a turn begins with a short hint about keeping the reply snappy or going more in-depth, follow that preference for that answer.";
 
         const config = {
           responseModalities: [Modality.AUDIO],
@@ -1938,6 +2192,10 @@
       stopSessionBtn.disabled = true;
       nextPlaybackTime = 0;
       activeAudioSources = [];
+      assistantTalking = false;
+      assistantSpeechStartMs = 0;
+      assistantLastFinishMs = 0;
+      assistantLastCutOffMs = 0;
       lastUserTranscriptText = "";
       lastAssistantTranscriptText = "";
       suppressAssistantTurn = false;
@@ -1962,8 +2220,14 @@
         return;
       }
       try {
+        const styleHint = buildResponseStyleHint();
+        const parts = [];
+        if (styleHint) {
+          parts.push({ text: styleHint });
+        }
+        parts.push({ text });
         liveSession.sendClientContent({
-          turns: [{ role: "user", parts: [{ text }] }],
+          turns: [{ role: "user", parts }],
           turnComplete: true
         });
         log("Sent text turn.");
@@ -2029,6 +2293,25 @@
       });
     }
 
+    if (responseLengthEl) {
+      responseLengthMode = responseLengthEl.value || "balanced";
+      responseLengthEl.addEventListener("change", () => {
+        responseLengthMode = responseLengthEl.value || "balanced";
+        let msg;
+        if (responseLengthMode === "snappy") {
+          msg = "Responses will stay compact unless you ask for detail.";
+        } else if (responseLengthMode === "detailed") {
+          msg = "Responses will run longer when context allows.";
+        } else {
+          msg = "Responses back to balanced length.";
+        }
+        log(msg);
+        if (isSessionOpen) {
+          scheduleNextLively(performance.now());
+        }
+      });
+    }
+
     if (voiceSelectEl) {
       voiceSelectEl.addEventListener("change", () => {
         const v = voiceSelectEl.value || "model default";
@@ -2042,6 +2325,7 @@
         if (!screenAudioEnabled) {
           screenAudioWarningActive = false;
           lastScreenAudioChunkMs = 0;
+          screenAudioSilenceMs = 0;
         }
         log(
           "Screen audio → Gemini " +
@@ -2071,9 +2355,9 @@
       screenAudioSensitivityEl.addEventListener("change", () => {
         const v = screenAudioSensitivityEl.value;
         if (v === "high") {
-          screenAudioThreshold = 0.005;
+          screenAudioThreshold = 0.003;
         } else if (v === "low") {
-          screenAudioThreshold = 0.02;
+          screenAudioThreshold = 0.012;
         } else {
           screenAudioThreshold = SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT;
         }
@@ -2098,8 +2382,8 @@
         log("Failed to initialise Gemini client: " + (err?.message || err), "error");
       }
       appendSystemBubble(
-        "Start the AI session, allow mic, optionally share a game window with audio, and talk. " +
-        "I keep pulling screen frames every fraction of a second; I only cut myself off when your mic clearly starts talking."
+        "Start the AI session (Edge or Brave give the steadiest capture), allow mic, optionally share a game window with audio, and talk. " +
+          "I keep pulling screen frames every fraction of a second; I wait for roughly a second of real speech before I cut myself off to listen, and I let my replies finish unless you truly interrupt."
       );
       if (!contextMonitorTimer) {
         contextMonitorTimer = setInterval(monitorContextFreshness, 2500);
