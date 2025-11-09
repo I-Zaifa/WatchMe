@@ -823,10 +823,12 @@
       hyper:  { idleMs: 2000, minGapMs: 4000,  maxGapMs: 8000 }
     };
 
-    const MIC_SPEECH_FRAMES_START = 3;
-    const MIC_SPEECH_FRAMES_END   = 8;
     const MIC_RMS_THRESHOLD_DEFAULT = 0.015;
-    const SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT = 0.01;
+    const MIC_SPEECH_HOLD_MS = 1100;
+    const MIC_SILENCE_RELEASE_MS = 650;
+    const MIC_BACKFILL_MAX_MS = 900;
+    const SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT = 0.006;
+    const SCREEN_AUDIO_SILENCE_KEEPALIVE_MS = 1200;
 
     let micThreshold = MIC_RMS_THRESHOLD_DEFAULT;
     let screenAudioThreshold = SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT;
@@ -845,8 +847,11 @@
     let micProcessor = null;
     let micGain = null;
     let isUserSpeaking = false;
-    let micSpeakFrameCount = 0;
-    let micSilentFrameCount = 0;
+    let micFrameDurationMs = 0;
+    let micSpeechAccumMs = 0;
+    let micSilenceAccumMs = 0;
+    let micChunkBacklog = [];
+    let micChunkBacklogMs = 0;
 
     let screenStream = null;
     let screenCanvas = null;
@@ -858,6 +863,15 @@
     let screenAudioSource = null;
     let screenAudioProcessor = null;
     let screenAudioGain = null;
+    let screenAudioSilenceMs = 0;
+
+    let lastScreenFrameSentMs = 0;
+    let lastScreenFrameFailureMs = 0;
+    let lastScreenFrameFailureMsg = "";
+    let lastScreenFrameFailureLogMs = 0;
+    let lastScreenAudioChunkMs = 0;
+    let screenAudioWarningActive = false;
+    let lastScreenAudioWarningMs = 0;
 
     let lastScreenImageData = null;
     let lastScreenChangeMs = 0;
@@ -867,6 +881,9 @@
     let livelyTimer = null;
     let nextLivelyAtMs = 0;
     let lastAutoCommentMs = 0;
+    let lastAutoSkipMs = 0;
+
+    let contextMonitorTimer = null;
 
     let lastUserActivityMs = performance.now();
     let lastUserTranscriptText = "";
@@ -945,6 +962,121 @@
       chatLogEl.scrollTop = chatLogEl.scrollHeight;
     }
 
+    function markScreenFrameFailure(message) {
+      lastScreenFrameFailureMs = performance.now();
+      if (!message) return;
+      const now = performance.now();
+      if (
+        message === lastScreenFrameFailureMsg &&
+        now - lastScreenFrameFailureLogMs < 4000
+      ) {
+        return;
+      }
+      lastScreenFrameFailureMsg = message;
+      lastScreenFrameFailureLogMs = now;
+      log(message, "warn");
+      appendSystemBubble(message);
+      if (screenOverlayText) {
+        screenOverlayText.textContent = message;
+      }
+    }
+
+    function hasFreshScreenFrame(windowMs = 6000) {
+      if (!screenStream || !lastScreenFrameSentMs) return false;
+      return performance.now() - lastScreenFrameSentMs <= windowMs;
+    }
+
+    function hasFreshScreenAudio(windowMs = 6000) {
+      if (!screenAudioEnabled || !screenAudioStream || !lastScreenAudioChunkMs)
+        return false;
+      return performance.now() - lastScreenAudioChunkMs <= windowMs;
+    }
+
+    function updateScreenStatusUi() {
+      if (!screenOverlayText) return;
+      if (!screenStream) {
+        screenOverlayText.textContent = "Not sharing screen.";
+        return;
+      }
+
+      const now = performance.now();
+      if (hasFreshScreenFrame(4000)) {
+        if (screenAudioEnabled && screenAudioStream) {
+          if (hasFreshScreenAudio(4000)) {
+            screenOverlayText.textContent = "Screen + audio live → Gemini.";
+          } else {
+            screenOverlayText.textContent =
+              "Screen live (system audio silent).";
+          }
+        } else {
+          screenOverlayText.textContent = "Screen live (no system audio).";
+        }
+      } else if (
+        lastScreenFrameFailureMs &&
+        now - lastScreenFrameFailureMs < 8000 &&
+        lastScreenFrameFailureMsg
+      ) {
+        screenOverlayText.textContent = lastScreenFrameFailureMsg;
+      } else {
+        screenOverlayText.textContent = "Screen feed stale or blocked.";
+      }
+    }
+
+    function monitorContextFreshness() {
+      updateScreenStatusUi();
+
+      if (isSessionOpen && screenAudioEnabled && screenAudioStream) {
+        const fresh = hasFreshScreenAudio(7000);
+        if (!fresh) {
+          const now = performance.now();
+          if (!screenAudioWarningActive || now - lastScreenAudioWarningMs > 6000) {
+            screenAudioWarningActive = true;
+            lastScreenAudioWarningMs = now;
+            log(
+              "System audio feed seems silent or blocked; the model cannot hear it right now.",
+              "warn"
+            );
+            appendSystemBubble(
+              "Heads up: Gemini hasn't received system audio for several seconds. It should say it can't hear the video until audio resumes."
+            );
+          }
+        } else if (screenAudioWarningActive) {
+          screenAudioWarningActive = false;
+          lastScreenAudioWarningMs = performance.now();
+          log("System audio feed resumed.");
+        }
+      } else {
+        screenAudioWarningActive = false;
+      }
+    }
+
+    function buildContextHints(windowMs = 6500) {
+      const hints = [];
+      if (!hasFreshScreenFrame(windowMs)) {
+        if (screenStream) {
+          hints.push(
+            "You have not seen a fresh visual frame in the last several seconds, so make it clear if you cannot see what is happening right now."
+          );
+        } else {
+          hints.push(
+            "You do not currently have a screen feed, so avoid guessing about visuals."
+          );
+        }
+      }
+      if (!hasFreshScreenAudio(windowMs)) {
+        if (screenAudioEnabled && screenAudioStream) {
+          hints.push(
+            "You have not received any system audio for several seconds; state that you can't hear it instead of inventing sound details."
+          );
+        } else {
+          hints.push(
+            "There is no system audio feed right now, so do not claim to hear the video's audio."
+          );
+        }
+      }
+      return hints.join(" ");
+    }
+
     function markUserActivity() {
       lastUserActivityMs = performance.now();
     }
@@ -984,6 +1116,40 @@
         int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
       return int16;
+    }
+
+    function sendMicChunk(base64, ctx) {
+      if (!base64 || !ctx) return;
+      if (!liveSession || !isSessionOpen) return;
+      try {
+        liveSession.sendRealtimeInput({
+          audio: {
+            data: base64,
+            mimeType: "audio/pcm;rate=" + ctx.sampleRate
+          }
+        });
+      } catch (err) {
+        log("Failed to send mic audio chunk: " + (err?.message || err), "warn");
+      }
+    }
+
+    function enqueueMicBacklog(base64, frameMs) {
+      if (!base64 || !frameMs) return;
+      micChunkBacklog.push({ base64, frameMs });
+      micChunkBacklogMs += frameMs;
+      while (micChunkBacklogMs > MIC_BACKFILL_MAX_MS && micChunkBacklog.length > 0) {
+        const removed = micChunkBacklog.shift();
+        micChunkBacklogMs -= removed.frameMs;
+      }
+    }
+
+    function flushMicBacklog(ctx) {
+      if (!micChunkBacklog.length) return;
+      for (const chunk of micChunkBacklog) {
+        sendMicChunk(chunk.base64, ctx);
+      }
+      micChunkBacklog = [];
+      micChunkBacklogMs = 0;
     }
 
     function int16ToBase64(int16) {
@@ -1074,6 +1240,12 @@
         micGain = ctx.createGain();
         micGain.gain.value = 0; // no local monitoring
 
+        micFrameDurationMs = (micProcessor.bufferSize / ctx.sampleRate) * 1000;
+        micSpeechAccumMs = 0;
+        micSilenceAccumMs = 0;
+        micChunkBacklog = [];
+        micChunkBacklogMs = 0;
+
         micSource.connect(micProcessor);
         micProcessor.connect(micGain);
         micGain.connect(ctx.destination);
@@ -1089,36 +1261,49 @@
             sumSq += v * v;
           }
           const rms = Math.sqrt(sumSq / floatData.length);
-
-          if (rms > micThreshold) {
-            micSpeakFrameCount++;
-            micSilentFrameCount = 0;
-            if (!isUserSpeaking && micSpeakFrameCount >= MIC_SPEECH_FRAMES_START) {
-              isUserSpeaking = true;
-              markUserActivity();
-              if (activeAudioSources.length > 0) {
-                handleBargeIn();
-              }
-            }
-          } else {
-            micSilentFrameCount++;
-            if (isUserSpeaking && micSilentFrameCount >= MIC_SPEECH_FRAMES_END) {
-              isUserSpeaking = false;
-            }
-          }
+          const frameMs =
+            micFrameDurationMs || (floatData.length / ctx.sampleRate) * 1000;
 
           const pcm16 = float32ToInt16(floatData);
           const base64 = int16ToBase64(pcm16);
 
-          try {
-            liveSession.sendRealtimeInput({
-              audio: {
-                data: base64,
-                mimeType: "audio/pcm;rate=" + ctx.sampleRate
+          if (rms > micThreshold) {
+            if (!isUserSpeaking) {
+              micSpeechAccumMs += frameMs;
+              micSilenceAccumMs = 0;
+              enqueueMicBacklog(base64, frameMs);
+              if (micSpeechAccumMs >= MIC_SPEECH_HOLD_MS) {
+                isUserSpeaking = true;
+                micSilenceAccumMs = 0;
+                markUserActivity();
+                if (activeAudioSources.length > 0) {
+                  handleBargeIn();
+                }
+                flushMicBacklog(ctx);
               }
-            });
-          } catch (err) {
-            log("Failed to send mic audio chunk: " + (err?.message || err), "warn");
+            } else {
+              micSilenceAccumMs = 0;
+              sendMicChunk(base64, ctx);
+            }
+          } else {
+            if (!isUserSpeaking) {
+              micSpeechAccumMs = Math.max(0, micSpeechAccumMs - frameMs * 0.6);
+              micSilenceAccumMs += frameMs;
+              enqueueMicBacklog(base64, frameMs);
+            } else {
+              micSilenceAccumMs += frameMs;
+              sendMicChunk(base64, ctx);
+            }
+
+            if (micSilenceAccumMs >= MIC_SILENCE_RELEASE_MS) {
+              if (isUserSpeaking) {
+                isUserSpeaking = false;
+              }
+              micSpeechAccumMs = 0;
+              micSilenceAccumMs = 0;
+              micChunkBacklog = [];
+              micChunkBacklogMs = 0;
+            }
           }
         };
 
@@ -1149,6 +1334,11 @@
         micStream.getTracks().forEach((t) => t.stop());
         micStream = null;
       }
+      micSpeechAccumMs = 0;
+      micSilenceAccumMs = 0;
+      micChunkBacklog = [];
+      micChunkBacklogMs = 0;
+      isUserSpeaking = false;
       micChipEl.textContent = "off";
       micChipEl.style.color = "#fecaca";
       log("Mic capture stopped.");
@@ -1157,6 +1347,13 @@
     async function startScreenShare() {
       if (screenStream) return;
       try {
+        lastScreenFrameSentMs = 0;
+        lastScreenFrameFailureMs = 0;
+        lastScreenFrameFailureMsg = "";
+        lastScreenFrameFailureLogMs = 0;
+        lastScreenAudioChunkMs = 0;
+        screenAudioWarningActive = false;
+        lastScreenAudioWarningMs = 0;
         screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: true
@@ -1191,11 +1388,11 @@
             screenAudioGain.connect(ctx.destination);
 
             screenAudioProcessor.onaudioprocess = (event) => {
-              if (!liveSession || !isSessionOpen) return;
               if (!screenAudioEnabled) return;
 
               const buffer = event.inputBuffer;
               const floatData = buffer.getChannelData(0);
+              const frameMs = (floatData.length / ctx.sampleRate) * 1000;
 
               let sumSq = 0;
               for (let i = 0; i < floatData.length; i++) {
@@ -1203,9 +1400,34 @@
                 sumSq += v * v;
               }
               const rms = Math.sqrt(sumSq / floatData.length);
-              if (rms < screenAudioThreshold) return;
+              const audibleThreshold = Math.max(screenAudioThreshold * 0.6, 0.0015);
+              const isAudible = rms >= audibleThreshold;
 
-              const down = floatData.map((v) => v * 0.85);
+              if (isAudible) {
+                screenAudioSilenceMs = 0;
+              } else {
+                screenAudioSilenceMs += frameMs;
+              }
+
+              let shouldSend = isAudible;
+              if (!shouldSend && screenAudioSilenceMs >= SCREEN_AUDIO_SILENCE_KEEPALIVE_MS) {
+                shouldSend = true;
+                screenAudioSilenceMs = 0;
+              }
+
+              if (!shouldSend) return;
+
+              lastScreenAudioChunkMs = performance.now();
+              updateScreenStatusUi();
+
+              if (!liveSession || !isSessionOpen) return;
+
+              const scale = isAudible ? 0.85 : 1.0;
+              const down = new Float32Array(floatData.length);
+              for (let i = 0; i < floatData.length; i++) {
+                const scaled = floatData[i] * scale;
+                down[i] = Math.max(-1, Math.min(1, scaled));
+              }
               const pcm16 = float32ToInt16(down);
               const base64 = int16ToBase64(pcm16);
 
@@ -1231,7 +1453,7 @@
         stopScreenBtn.disabled = false;
         screenDot.classList.add("live");
         screenDot.nextElementSibling.textContent = "On";
-        screenOverlayText.textContent = "Screen live → Gemini.";
+        updateScreenStatusUi();
         log("Screen share started.");
 
         vTrack.addEventListener("ended", () => {
@@ -1278,8 +1500,17 @@
       lastScreenImageData = null;
       lastScreenChangeMs = 0;
       lastScreenChangeLevel = 0;
+      lastScreenFrameSentMs = 0;
+      lastScreenFrameFailureMs = 0;
+      lastScreenFrameFailureMsg = "";
+      lastScreenFrameFailureLogMs = 0;
+      lastScreenAudioChunkMs = 0;
+      screenAudioWarningActive = false;
+      lastScreenAudioWarningMs = 0;
+      screenAudioSilenceMs = 0;
       startScreenBtn.disabled = false;
       stopScreenBtn.disabled = true;
+      updateScreenStatusUi();
       log("Screen share stopped.");
     }
 
@@ -1326,29 +1557,50 @@
         // cross-origin; ignore diff metrics
       }
 
-      screenCanvas.toBlob(
-        (blob) => {
-          if (!blob || !liveSession || !isSessionOpen) return;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = reader.result;
-            const base64 = dataUrl.split(",")[1];
-            try {
-              liveSession.sendRealtimeInput({
-                video: {
-                  data: base64,
-                  mimeType: blob.type || "image/jpeg"
-                }
-              });
-            } catch (err) {
-              log("Failed to send video frame: " + (err?.message || err), "warn");
+      try {
+        screenCanvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              markScreenFrameFailure(
+                "Screen capture blocked: browser prevented forwarding this window."
+              );
+              return;
             }
-          };
-          reader.readAsDataURL(blob);
-        },
-        "image/jpeg",
-        0.85
-      );
+            lastScreenFrameSentMs = performance.now();
+            lastScreenFrameFailureMs = 0;
+            lastScreenFrameFailureMsg = "";
+            updateScreenStatusUi();
+            if (!liveSession || !isSessionOpen) {
+              return;
+            }
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const dataUrl = reader.result;
+              const base64 = dataUrl.split(",")[1];
+              try {
+                liveSession.sendRealtimeInput({
+                  video: {
+                    data: base64,
+                    mimeType: blob.type || "image/jpeg"
+                  }
+                });
+              } catch (err) {
+                log(
+                  "Failed to send video frame: " + (err?.message || err),
+                  "warn"
+                );
+              }
+            };
+            reader.readAsDataURL(blob);
+          },
+          "image/jpeg",
+          0.85
+        );
+      } catch (err) {
+        markScreenFrameFailure(
+          "Screen capture failed: " + (err?.message || err)
+        );
+      }
     }
 
     function updateScreenFpsInterval() {
@@ -1365,11 +1617,21 @@
     }
 
     function screenChangedRecently(windowMs = 12000, minLevel = 0) {
-      if (!lastScreenChangeMs) return false;
-      const age = performance.now() - lastScreenChangeMs;
-      if (age > windowMs) return false;
-      if (lastScreenChangeLevel < minLevel) return false;
-      return true;
+      const now = performance.now();
+      if (lastScreenChangeMs) {
+        const age = now - lastScreenChangeMs;
+        if (age <= windowMs && lastScreenChangeLevel >= minLevel) {
+          return true;
+        }
+      }
+      if (
+        minLevel === 0 &&
+        lastScreenFrameSentMs &&
+        now - lastScreenFrameSentMs <= windowMs
+      ) {
+        return true;
+      }
+      return false;
     }
 
     function updateSessionStatus(active) {
@@ -1418,23 +1680,45 @@
       if (now - lastUserActivityMs < profile.idleMs) return;
       if (nextLivelyAtMs && now < nextLivelyAtMs) return;
 
-      const hasScreenContext = !!screenStream;
+      const freshVideo = hasFreshScreenFrame(6500);
+      const freshAudio = hasFreshScreenAudio(6500);
+
+      if (!freshVideo && !freshAudio) {
+        scheduleNextLively(now);
+        if (now - lastAutoSkipMs > 5000) {
+          log(
+            "Skipping auto commentary: no fresh screen frames or system audio to ground a remark.",
+            "warn"
+          );
+        }
+        lastAutoSkipMs = now;
+        return;
+      }
+      lastAutoSkipMs = 0;
+
+      const hasScreenContext = freshVideo || !!screenStream;
       const strongChange = screenChangedRecently(8000, 20);
-      const anyChange    = screenChangedRecently(12000, 12);
+      const diffChange = screenChangedRecently(12000, 12);
+      const anyChange = strongChange || diffChange;
+      const fallbackFresh = freshVideo && !anyChange;
 
       if (!hasScreenContext && !anyChange) {
         scheduleNextLively(now);
         return;
       }
 
-      if (!anyChange) {
+      if (!anyChange && !fallbackFresh) {
         if (now - lastAutoCommentMs < 25000) {
           scheduleNextLively(now);
           return;
         }
+      } else if (fallbackFresh && now - lastAutoCommentMs < 25000) {
+        scheduleNextLively(now);
+        return;
       }
 
       let prompt;
+      const contextHints = buildContextHints();
       if (strongChange) {
         prompt =
           "Give a natural spoken comment about what has clearly changed on my screen in the last several seconds. " +
@@ -1444,10 +1728,17 @@
         prompt =
           "Give a short to medium spoken comment or suggestion based on the last several seconds of what you see and hear. " +
           "Add something genuinely useful or interesting; do not repeat earlier commentary or narrate tiny UI flickers.";
+      } else if (fallbackFresh) {
+        prompt =
+          "You just received a fresh look at the screen, but it might not have changed much. Only react if you can clearly tell what is happening right now; otherwise say that you can't see enough yet.";
       } else {
         prompt =
           "Only speak if you have something genuinely new or useful to say about what you're seeing and hearing from the last few seconds. " +
           "If there is basically nothing new, respond with at most a very brief remark.";
+      }
+
+      if (contextHints) {
+        prompt += " " + contextHints;
       }
 
       try {
@@ -1489,6 +1780,11 @@
       } else if (kind === "screen") {
         extra =
           " Base your answer mainly on what has been visible on my screen in roughly the last 5–10 seconds, not a single frozen frame.";
+      }
+
+      const contextHints = buildContextHints();
+      if (contextHints) {
+        extra += " " + contextHints;
       }
 
       const prompt =
@@ -1637,10 +1933,13 @@
         const systemText =
           "You are an engaging co-commentator for the user's games and apps. " +
           "You see a low-FPS video feed of their screen and hear two audio sources: their microphone (primary) and any system audio from the shared screen (secondary). " +
-          "Always treat the user's spoken words as the main signal and background/system audio as context only.\n\n" +
+          "Always treat the user's spoken words as the main signal and background/system audio as context only. " +
+          "The client waits for about a second of sustained speech before treating the mic as an intentional turn, so ignore stray syllables or random noises.\n\n" +
           "The client may stop playing your audio when the user starts speaking (barge-in). Once you sense the user talking again, treat your previous response as cut off and focus on the new request.\n\n" +
           "Use several seconds of recent visual and audio context for every answer, not a single frozen frame. " +
           "Do not repeatedly say the video or game is pausing and playing again unless the user explicitly asks.\n\n" +
+          "You only receive microphone audio and system audio clips when the client successfully streams them. If system audio has been silent or missing for several seconds, say you cannot hear it instead of guessing about music or sound effects.\n" +
+          "If the recent visuals are missing, stale, or blocked, acknowledge that limitation and ask for new context instead of describing older scenes.\n\n" +
           "Special commands:\n" +
           "• “look at the screen”, “watch the screen”, “listen to the audio”, “what song is playing”, “what's going on right now” → use the last 5–10 seconds of screen/audio as your main context before answering.\n" +
           "• “keep going” → continuous live commentary; keep reacting without waiting for long silence.\n\n" +
@@ -1730,6 +2029,7 @@
       lastUserTranscriptText = "";
       lastAssistantTranscriptText = "";
       suppressAssistantTurn = false;
+      lastAutoSkipMs = 0;
       if (focusTimeoutId) {
         clearTimeout(focusTimeoutId);
         focusTimeoutId = null;
@@ -1827,12 +2127,18 @@
     if (screenAudioToggleEl) {
       screenAudioToggleEl.addEventListener("change", () => {
         screenAudioEnabled = screenAudioToggleEl.checked;
+        if (!screenAudioEnabled) {
+          screenAudioWarningActive = false;
+          lastScreenAudioChunkMs = 0;
+          screenAudioSilenceMs = 0;
+        }
         log(
           "Screen audio → Gemini " +
             (screenAudioEnabled
               ? "enabled (it will hear game/tab audio when you are not muted by the OS)."
               : "disabled (only your mic is sent).")
         );
+        updateScreenStatusUi();
       });
     }
 
@@ -1854,9 +2160,9 @@
       screenAudioSensitivityEl.addEventListener("change", () => {
         const v = screenAudioSensitivityEl.value;
         if (v === "high") {
-          screenAudioThreshold = 0.005;
+          screenAudioThreshold = 0.003;
         } else if (v === "low") {
-          screenAudioThreshold = 0.02;
+          screenAudioThreshold = 0.012;
         } else {
           screenAudioThreshold = SCREEN_AUDIO_RMS_THRESHOLD_DEFAULT;
         }
@@ -1882,8 +2188,11 @@
       }
       appendSystemBubble(
         "Start the AI session, allow mic, optionally share a game window with audio, and talk. " +
-        "I keep pulling screen frames every fraction of a second; I only cut myself off when your mic clearly starts talking."
+        "I keep pulling screen frames every fraction of a second; I wait for roughly a second of real speech before I cut myself off to listen."
       );
+      if (!contextMonitorTimer) {
+        contextMonitorTimer = setInterval(monitorContextFreshness, 2500);
+      }
     })();
   </script>
 </body>
