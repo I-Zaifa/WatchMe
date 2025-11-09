@@ -873,6 +873,14 @@
     let screenAudioWarningActive = false;
     let lastScreenAudioWarningMs = 0;
 
+    let lastScreenFrameSentMs = 0;
+    let lastScreenFrameFailureMs = 0;
+    let lastScreenFrameFailureMsg = "";
+    let lastScreenFrameFailureLogMs = 0;
+    let lastScreenAudioChunkMs = 0;
+    let screenAudioWarningActive = false;
+    let lastScreenAudioWarningMs = 0;
+
     let lastScreenImageData = null;
     let lastScreenChangeMs = 0;
     let lastScreenChangeLevel = 0;
@@ -1420,14 +1428,11 @@
               lastScreenAudioChunkMs = performance.now();
               updateScreenStatusUi();
 
+              lastScreenAudioChunkMs = performance.now();
+              updateScreenStatusUi();
               if (!liveSession || !isSessionOpen) return;
 
-              const scale = isAudible ? 0.85 : 1.0;
-              const down = new Float32Array(floatData.length);
-              for (let i = 0; i < floatData.length; i++) {
-                const scaled = floatData[i] * scale;
-                down[i] = Math.max(-1, Math.min(1, scaled));
-              }
+              const down = floatData.map((v) => v * 0.85);
               const pcm16 = float32ToInt16(down);
               const base64 = int16ToBase64(pcm16);
 
@@ -1507,7 +1512,6 @@
       lastScreenAudioChunkMs = 0;
       screenAudioWarningActive = false;
       lastScreenAudioWarningMs = 0;
-      screenAudioSilenceMs = 0;
       startScreenBtn.disabled = false;
       stopScreenBtn.disabled = true;
       updateScreenStatusUi();
@@ -2130,7 +2134,6 @@
         if (!screenAudioEnabled) {
           screenAudioWarningActive = false;
           lastScreenAudioChunkMs = 0;
-          screenAudioSilenceMs = 0;
         }
         log(
           "Screen audio → Gemini " +
